@@ -1,0 +1,43 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.preferences.quoteStyle": "single",
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": "active",
+  "editor.guides.indentation": true,
+  "editor.suggestSelection": "first",
+  "editor.wordBasedSuggestions": { "enabled": false },
+  "editor.stickyScroll.enabled": true,
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.associations": {
+    "*.ets": "typescript",
+    "*.ts": "typescript",
+    "*.tsx": "typescriptreact"
+  },
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/.git": true,
+    "**/*.tsbuildinfo": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/*.tsbuildinfo": true,
+    "**/package-lock.json": true
+  },
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.scrollback": 10000,
+  "task.allowAutomaticTasks": "on",
+  "git.autofetch": true,
+  "git.confirmSyncBeforeFetch": false,
+  "workbench.tree.indent": 12,
+  "workbench.editor.wrapTabs": true,
+  "explorer.compactFolders": false,
+  "debug.javascript.autoAttachFilter": "onlyWithJsDebugToken"
+}

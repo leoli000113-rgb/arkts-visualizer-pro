@@ -1,0 +1,51 @@
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: #f0f2f5; color: #1f2329; }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px; background: #ffffff; border-bottom: 1px solid #e0e3e8;
+  flex-wrap: wrap;
+}
+.topbar h1 { font-size: 14px; margin: 0; font-weight: 600; color: #1f2329; }
+.topbar select, .topbar button {
+  background: #ffffff; color: #1f2329; border: 1px solid #d0d5dd;
+  border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer;
+}
+.topbar button:hover { background: #f2f4f7; }
+.topbar .err { color: #d92d20; font-size: 12px; }
+.topbar .warn { color: #b54708; font-size: 12px; cursor: help; white-space: pre-line; }
+
+.content { flex: 1; display: flex; min-height: 0; }
+.canvas-pane {
+  flex: 1; display: flex; align-items: flex-start; justify-content: center;
+  padding: 24px; overflow: auto; background: #f0f2f5;
+}
+.phone-frame {
+  border: 10px solid #14181f; border-radius: 28px;
+  background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.18);
+  overflow: hidden; position: relative;
+}
+.phone-screen { position: relative; overflow: hidden; user-select: none; background: #fff; }
+.fold-toggle { display: flex; gap: 4px; }
+.fold-toggle button { padding: 4px 8px; }
+.fold-toggle button.active { background: #3a6df0; border-color: #3a6df0; color: #fff; }
+
+.code-pane {
+  flex: 1 1 auto; min-height: 220px; display: flex; flex-direction: column;
+  border-left: 1px solid #e0e3e8; background: #ffffff;
+}
+.code-pane textarea {
+  flex: 1; resize: none; border: 0; outline: 0; padding: 12px;
+  background: transparent; color: #24292f; font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 12.5px; line-height: 1.5; tab-size: 2;
+}
+.code-pane .label {
+  padding: 6px 12px; font-size: 11px; color: #667085;
+  border-bottom: 1px solid #e0e3e8; text-transform: uppercase; letter-spacing: 0.5px;
+}

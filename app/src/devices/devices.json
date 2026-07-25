@@ -1,0 +1,37 @@
+{
+  "_note": "数据来自华为官网规格页，校准日期 2026-07-21",
+  "vp_to_cssPx": 0.6,
+  "px_to_vp": "round(px * 160 / dpi)",
+  "devices": [
+    {
+      "model": "Mate 80 Pro Max",
+      "foldable": false,
+      "screenW_px": 1320,
+      "screenH_px": 2848,
+      "dpi": 455,
+      "screenW_vp": 464,
+      "screenH_vp": 1001,
+      "source": "https://consumer.huawei.com/cn/phones/mate80-pro-max/specs/"
+    },
+    {
+      "model": "Mate X7",
+      "foldable": true,
+      "foldType": "book",
+      "states": {
+        "unfolded": { "screenW_px": 2416, "screenH_px": 2210, "dpi": 409, "screenW_vp": 945, "screenH_vp": 865 },
+        "folded":   { "screenW_px": 1080, "screenH_px": 2444, "dpi": 412, "screenW_vp": 419, "screenH_vp": 949 }
+      },
+      "source": "https://consumer.huawei.com/cn/phones/mate-x7/specs/"
+    },
+    {
+      "model": "Pura X Max",
+      "foldable": true,
+      "foldType": "flip",
+      "states": {
+        "unfolded": { "screenW_px": 2584, "screenH_px": 1828, "dpi": 411, "screenW_vp": 1006, "screenH_vp": 712 },
+        "folded":   { "screenW_px": 1264, "screenH_px": 1848, "dpi": 415, "screenW_vp": 487, "screenH_vp": 712 }
+      },
+      "source": "https://consumer.huawei.com/cn/phones/pura-x-max/specs/"
+    }
+  ]
+}

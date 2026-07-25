@@ -1,0 +1,42 @@
+{
+  "_note": "⚠️ 全部规格为估算值，需用华为开发者官网(developer.huawei.com)官方数据校准。应用内将提供『设备档案』编辑窗口，可随时修改 dpi / 像素尺寸。",
+  "_conversion": {
+    "vp_to_inch": 0.00625,
+    "vp_to_cssPx": 0.6,
+    "px_to_vp": "round(px * 160 / dpi)",
+    "rationale": "vp 是设备无关单位，1 vp = 1/160 英寸（与具体设备 dpi 无关）。dpi 只决定『一个屏幕有多少物理像素』即 screenW_vp，而不改变 vp 的物理大小。Web 端按 1 vp = 0.6 CSS px 渲染即可保证与真机物理尺寸一致。"
+  },
+  "devices": [
+    {
+      "model": "Mate 80 Pro Max",
+      "foldable": false,
+      "foldType": null,
+      "screenW_px": 1280,
+      "screenH_px": 2848,
+      "dpi": 480,
+      "screenW_vp": 427,
+      "screenH_vp": 949,
+      "source": "estimate"
+    },
+    {
+      "model": "Pura X Max",
+      "foldable": true,
+      "foldType": "clamshell",
+      "states": {
+        "unfolded": { "screenW_px": 1080, "screenH_px": 2640, "dpi": 402, "screenW_vp": 430, "screenH_vp": 1051 },
+        "folded":   { "screenW_px": 1040, "screenH_px": 1040, "dpi": 402, "screenW_vp": 414, "screenH_vp": 414 }
+      },
+      "source": "estimate"
+    },
+    {
+      "model": "Mate X7",
+      "foldable": true,
+      "foldType": "book",
+      "states": {
+        "unfolded": { "screenW_px": 2496, "screenH_px": 2224, "dpi": 412, "screenW_vp": 969, "screenH_vp": 864 },
+        "folded":   { "screenW_px": 1080, "screenH_px": 2448, "dpi": 412, "screenW_vp": 419, "screenH_vp": 950 }
+      },
+      "source": "estimate"
+    }
+  ]
+}
