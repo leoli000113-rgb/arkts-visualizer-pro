@@ -35,7 +35,8 @@ export function startResize(path: Path, dim: 'width' | 'height' | 'both', e: Rea
   window.addEventListener('pointerup', onUp)
 }
 
-const toVp = (start: number, deltaCss: number) => Math.max(0, Math.round((start + deltaCss / 0.6) * 10) / 10)
+const toVp = (start: number, deltaCss: number) =>
+  Math.max(0, Math.round((start + deltaCss / (0.6 * useStore.getState().zoom)) * 10) / 10)
 
 function onMove(e: PointerEvent) {
   if (!drag) return

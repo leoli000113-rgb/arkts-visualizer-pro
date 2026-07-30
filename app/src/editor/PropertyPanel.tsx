@@ -3,6 +3,8 @@ import { useStore } from '../store/store'
 import { getModifier, getNodeAtPath, numModifier, setModifier, Path } from '../ir/mutate'
 import { serializeArg } from '../ir/serialize'
 import { ArgVal, IRNode } from '../ir/types'
+import { getSpec, isStructural } from '../registry'
+import { ComponentSpec, FieldSpec } from '../registry/types'
 
 /* ---------- 读写辅助（全部经 store.mutateNode） ---------- */
 
@@ -26,6 +28,11 @@ const setMod = (mut: Mut, name: string, args: ArgVal[]) => mut(n => setModifier(
 const removeMod = (mut: Mut, name: string) =>
   mut(n => ({ ...n, modifiers: n.modifiers.filter(m => m.name !== name) }))
 
+/** num 修饰符的读/写闭包（专属区与通用区共用） */
+const numModGet = (node: IRNode, mod: string) => numModifier(node, mod)
+const numModSet = (mut: Mut, mod: string) => (v: number | undefined) =>
+  v === undefined ? removeMod(mut, mod) : setMod(mut, mod, [{ t: 'num', v }])
+
 function hexToCss(a: ArgVal | undefined): string {
   if (!a || a.t !== 'hex') return '#000000'
   const s = a.v.toString(16).toUpperCase().padStart(6, '0')
@@ -40,7 +47,7 @@ function PropTip({ text }: { text?: string }) {
   return <span className="prop-tip" data-tip={text}>!</span>
 }
 
-/** 属性中文说明：key 为修饰符名或常用标签 */
+/** 属性中文说明：key 为修饰符名或常用标签（专属字段的 tip 已并入 registry FieldSpec） */
 const TIPS: Record<string, string> = {
   width: '组件宽度。数字 = vp（1vp = 1/160 英寸），也可填 100% 占满父容器',
   height: '组件高度。数字 = vp，也可填 100%',
@@ -92,6 +99,8 @@ const TIPS: Record<string, string> = {
   group: '分组标识：同组 Radio/Checkbox 互斥',
 }
 
+const tipOf = (f: FieldSpec): string | undefined => f.tip ?? (f.mod ? TIPS[f.mod] : undefined) ?? TIPS[f.label]
+
 function NumField({ label, value, onSet, step, tip }: {
   label: string; value: number | undefined; onSet: (v: number | undefined) => void; step?: string; tip?: string
 }) {
@@ -141,11 +150,11 @@ function BoxNumField({ label, mod, node, mut }: { label: string; mod: string; no
   )
 }
 
-function StrModField({ label, mod, node, mut }: { label: string; mod: string; node: IRNode; mut: Mut }) {
+function StrModField({ label, mod, node, mut, tip }: { label: string; mod: string; node: IRNode; mut: Mut; tip?: string }) {
   const a = getModifier(node, mod)?.args[0]
   const text = a ? (a.t === 'str' ? a.v : serializeArg(a)) : ''
   return (
-    <label className="prop-row"><span>{label}<PropTip text={TIPS[mod]} /></span>
+    <label className="prop-row"><span>{label}<PropTip text={tip ?? TIPS[mod]} /></span>
       <input value={text} placeholder="未设置"
         onChange={(e) => e.target.value === ''
           ? removeMod(mut, mod)
@@ -169,20 +178,20 @@ function EnumField({ label, value, options, allowUnset, onSet, tip }: {
   )
 }
 
-function EnumModField({ label, mod, options, node, mut }: {
-  label: string; mod: string; options: string[]; node: IRNode; mut: Mut
+function EnumModField({ label, mod, options, node, mut, tip }: {
+  label: string; mod: string; options: string[]; node: IRNode; mut: Mut; tip?: string
 }) {
   const a = getModifier(node, mod)?.args[0]
   const v = a && a.t === 'enum' ? a.v : undefined
-  return <EnumField label={label} value={v} options={options} tip={TIPS[mod]}
+  return <EnumField label={label} value={v} options={options} tip={tip ?? TIPS[mod]}
     onSet={(x) => x === undefined ? removeMod(mut, mod) : setMod(mut, mod, [{ t: 'enum', v: x }])} />
 }
 
-function BoolModField({ label, mod, node, mut }: { label: string; mod: string; node: IRNode; mut: Mut }) {
+function BoolModField({ label, mod, node, mut, tip }: { label: string; mod: string; node: IRNode; mut: Mut; tip?: string }) {
   const a = getModifier(node, mod)?.args[0]
   const v = a && a.t === 'bool' ? String(a.v) : ''
   return (
-    <label className="prop-row"><span>{label}<PropTip text={TIPS[mod]} /></span>
+    <label className="prop-row"><span>{label}<PropTip text={tip ?? TIPS[mod]} /></span>
       <select value={v} onChange={(e) => {
         if (e.target.value === '') removeMod(mut, mod)
         else setMod(mut, mod, [{ t: 'bool', v: e.target.value === 'true' }])
@@ -196,7 +205,7 @@ function BoolModField({ label, mod, node, mut }: { label: string; mod: string; n
 }
 
 /** 颜色：取色器 + hex 文本双编辑。文本支持 0xRRGGBB / 0xAARRGGBB / Color.*，Enter 或失焦提交 */
-function ColorModField({ label, mod, node, mut }: { label: string; mod: string; node: IRNode; mut: Mut }) {
+function ColorModField({ label, mod, node, mut, tip }: { label: string; mod: string; node: IRNode; mut: Mut; tip?: string }) {
   const a = getModifier(node, mod)?.args[0]
   const committed = a ? serializeArg(a) : ''
   const [text, setText] = useState(committed)
@@ -210,7 +219,7 @@ function ColorModField({ label, mod, node, mut }: { label: string; mod: string; 
     setText(committed) // 无法识别：回退为已提交值
   }
   return (
-    <label className="prop-row"><span>{label}<PropTip text={TIPS[mod]} /></span>
+    <label className="prop-row"><span>{label}<PropTip text={tip ?? TIPS[mod]} /></span>
       <input type="color" value={hexToCss(a)}
         onChange={(e) => setMod(mut, mod, [{ t: 'hex', v: parseInt(e.target.value.slice(1), 16) }])} />
       <input className="hex-input" value={text} placeholder="0xRRGGBB" spellCheck={false}
@@ -239,7 +248,7 @@ function XYModField({ label, mod, node, mut }: { label: string; mod: string; nod
   return (
     <label className="prop-row"><span>{label}<PropTip text={TIPS[mod]} /></span>
       <input type="number" value={xv ?? ''} placeholder="x" onChange={onNum(xv, (v) => set(v, yv))} />
-      <input type="number" value={yv ?? ''} placeholder="y" onChange={onNum(yv, (v) => set(xv, v))} />
+      <input type="number" value={yv ?? ''} placeholder="y" onChange={onNum(xv, (v) => set(xv, v))} />
     </label>
   )
 }
@@ -262,137 +271,103 @@ function CtorTextField({ label, node, mut }: { label: string; node: IRNode; mut:
   )
 }
 
-/* ---------- 枚举常量 ---------- */
+/* ---------- schema 驱动的专属编辑区 ---------- */
 
-const BUTTON_TYPES = ['ButtonType.Capsule', 'ButtonType.Normal', 'ButtonType.Circle', 'ButtonType.ROUNDED_RECTANGLE']
-const IMAGE_FITS = ['ImageFit.Contain', 'ImageFit.Cover', 'ImageFit.Auto', 'ImageFit.Fill', 'ImageFit.None', 'ImageFit.ScaleDown']
-const FLEX_ALIGNS = ['FlexAlign.Start', 'FlexAlign.Center', 'FlexAlign.End', 'FlexAlign.SpaceBetween', 'FlexAlign.SpaceAround', 'FlexAlign.SpaceEvenly']
-const H_ALIGNS = ['HorizontalAlign.Start', 'HorizontalAlign.Center', 'HorizontalAlign.End']
-const V_ALIGNS = ['VerticalAlign.Top', 'VerticalAlign.Center', 'VerticalAlign.Bottom']
-const ALIGNMENTS = ['Alignment.TopStart', 'Alignment.Top', 'Alignment.TopEnd', 'Alignment.Start', 'Alignment.Center', 'Alignment.End', 'Alignment.BottomStart', 'Alignment.Bottom', 'Alignment.BottomEnd']
-const FONT_WEIGHTS = ['FontWeight.Lighter', 'FontWeight.Normal', 'FontWeight.Regular', 'FontWeight.Medium', 'FontWeight.Bold', 'FontWeight.Bolder']
-const TEXT_ALIGNS = ['TextAlign.Start', 'TextAlign.Center', 'TextAlign.End', 'TextAlign.Left', 'TextAlign.Right']
-const PROGRESS_TYPES = ['ProgressType.Linear', 'ProgressType.Circular', 'ProgressType.Eclipse', 'ProgressType.ScaleRing', 'ProgressType.Capsule']
-const SCROLL_DIRS = ['ScrollDirection.Vertical', 'ScrollDirection.Horizontal', 'ScrollDirection.Free', 'ScrollDirection.None']
-const VISIBILITIES = ['Visibility.Visible', 'Visibility.Hidden', 'Visibility.None']
-const ITEM_ALIGNS = ['ItemAlign.Auto', 'ItemAlign.Start', 'ItemAlign.Center', 'ItemAlign.End', 'ItemAlign.Stretch', 'ItemAlign.Baseline']
-
-/** If/Else/ForEach/BuilderCall：修饰符不参与序列化，面板只展示信息 */
-const STRUCTURAL = new Set(['If', 'Else', 'ForEach', 'BuilderCall'])
-
-/* ---------- 专属编辑区（未知类型返回 null，仅通用区兜底） ---------- */
-
-function SpecificFields({ node, mut }: { node: IRNode; mut: Mut }) {
-  const obj = ctorObj(node)
-  const objNum = (k: string) => { const a = obj?.[k]; return a && a.t === 'num' ? a.v : undefined }
-  const objStr = (k: string) => { const a = obj?.[k]; return a && a.t === 'str' ? a.v : undefined }
-  const objEnum = (k: string) => { const a = obj?.[k]; return a && a.t === 'enum' ? a.v : undefined }
-  const objBool = (k: string) => { const a = obj?.[k]; return a && a.t === 'bool' ? a.v : undefined }
-  const setObjNum = (k: string) => (v: number | undefined) =>
-    setCtorObjField(mut, k, v === undefined ? undefined : { t: 'num', v })
-
-  switch (node.type) {
-    case 'Text':
-      return (<>
-        <CtorTextField label="text" node={node} mut={mut} />
-        <NumField label="fontSize" value={numModifier(node, 'fontSize')} onSet={(v) => v === undefined ? removeMod(mut, 'fontSize') : setMod(mut, 'fontSize', [{ t: 'num', v }])} />
-        <ColorModField label="fontColor" mod="fontColor" node={node} mut={mut} />
-        <EnumModField label="fontWeight" mod="fontWeight" options={FONT_WEIGHTS} node={node} mut={mut} />
-        <EnumModField label="textAlign" mod="textAlign" options={TEXT_ALIGNS} node={node} mut={mut} />
-        <NumField label="maxLines" value={numModifier(node, 'maxLines')} onSet={(v) => v === undefined ? removeMod(mut, 'maxLines') : setMod(mut, 'maxLines', [{ t: 'num', v }])} />
-      </>)
-    case 'Button':
-      return (<>
-        <CtorTextField label="text" node={node} mut={mut} />
-        <EnumModField label="type" mod="type" options={BUTTON_TYPES} node={node} mut={mut} />
-        <BoolModField label="stateEffect" mod="stateEffect" node={node} mut={mut} />
-        <ColorModField label="背景色" mod="backgroundColor" node={node} mut={mut} />
-      </>)
-    case 'Image':
-      return (<>
-        <CtorTextField label="src" node={node} mut={mut} />
-        <EnumModField label="objectFit" mod="objectFit" options={IMAGE_FITS} node={node} mut={mut} />
-      </>)
-    case 'Column':
-    case 'Row':
-      return (<>
-        <NumField label="space" value={objNum('space')} onSet={setObjNum('space')} />
-        <EnumModField label="justifyContent" mod="justifyContent" options={FLEX_ALIGNS} node={node} mut={mut} />
-        <EnumModField label="alignItems" mod="alignItems" options={node.type === 'Column' ? H_ALIGNS : V_ALIGNS} node={node} mut={mut} />
-      </>)
-    case 'Stack':
-      return (
-        <EnumField label="alignContent" value={objEnum('alignContent')} options={ALIGNMENTS}
-          onSet={(v) => setCtorObjField(mut, 'alignContent', v === undefined ? undefined : { t: 'enum', v })} />
-      )
-    case 'TextInput': {
-      const textA = obj?.text
-      return (<>
-        <label className="prop-row"><span>placeholder</span>
-          <input value={objStr('placeholder') ?? ''} placeholder="未设置"
-            onChange={(e) => setCtorObjField(mut, 'placeholder', e.target.value === '' ? undefined : { t: 'str', v: e.target.value })} />
-        </label>
-        {textA && textA.t !== 'str' ? (
-          <label className="prop-row"><span>text</span>
-            <input value={serializeArg(textA)} readOnly title="绑定状态变量，请在代码窗修改" />
-          </label>
-        ) : (
-          <label className="prop-row"><span>text</span>
-            <input value={objStr('text') ?? ''} placeholder="未设置"
-              onChange={(e) => setCtorObjField(mut, 'text', e.target.value === '' ? undefined : { t: 'str', v: e.target.value })} />
-          </label>
-        )}
-      </>)
-    }
-    case 'Slider':
-      return (<>
-        <NumField label="value" value={objNum('value')} onSet={setObjNum('value')} />
-        <NumField label="min" value={objNum('min')} onSet={setObjNum('min')} />
-        <NumField label="max" value={objNum('max')} onSet={setObjNum('max')} />
-        <NumField label="step" value={objNum('step')} onSet={setObjNum('step')} />
-      </>)
-    case 'Toggle': {
-      const isOnA = obj?.isOn
-      if (isOnA && isOnA.t !== 'bool') {
-        return (
-          <label className="prop-row"><span>isOn</span>
-            <input value={serializeArg(isOnA)} readOnly title="绑定状态变量，请在代码窗修改" />
-          </label>
-        )
-      }
-      return (
-        <label className="prop-row"><span>isOn</span>
-          <select value={objBool('isOn') === undefined ? '' : String(objBool('isOn'))}
-            onChange={(e) => setCtorObjField(mut, 'isOn', e.target.value === '' ? undefined : { t: 'bool', v: e.target.value === 'true' })}>
-            <option value="">（未设置）</option>
-            <option value="true">true</option>
-            <option value="false">false</option>
-          </select>
-        </label>
-      )
-    }
-    case 'Progress':
-      return (<>
-        <NumField label="value" value={objNum('value')} onSet={setObjNum('value')} />
-        <NumField label="total" value={objNum('total')} onSet={setObjNum('total')} />
-        <EnumField label="type" value={objEnum('type')} options={PROGRESS_TYPES} allowUnset={false}
-          onSet={(v) => v !== undefined && setCtorObjField(mut, 'type', { t: 'enum', v })} />
-      </>)
-    case 'Grid':
-      return (<>
-        <StrModField label="columnsTemplate" mod="columnsTemplate" node={node} mut={mut} />
-        <NumField label="rowsGap" value={numModifier(node, 'rowsGap')} onSet={(v) => v === undefined ? removeMod(mut, 'rowsGap') : setMod(mut, 'rowsGap', [{ t: 'num', v }])} />
-        <NumField label="columnsGap" value={numModifier(node, 'columnsGap')} onSet={(v) => v === undefined ? removeMod(mut, 'columnsGap') : setMod(mut, 'columnsGap', [{ t: 'num', v }])} />
-      </>)
-    case 'TabContent':
-      return <StrModField label="tabBar" mod="tabBar" node={node} mut={mut} />
-    case 'List':
-      return <NumField label="space" value={objNum('space')} onSet={setObjNum('space')} />
-    case 'Scroll':
-      return <EnumModField label="scrollable" mod="scrollable" options={SCROLL_DIRS} node={node} mut={mut} />
-    default:
-      return null
+/** ctorObjStr：str 可编辑；绑定状态变量（raw 等非 str）时只读 */
+function CtorObjStrField({ f, node, mut }: { f: FieldSpec; node: IRNode; mut: Mut }) {
+  const a = ctorObj(node)?.[f.key!]
+  if (a && a.t !== 'str') {
+    return (
+      <label className="prop-row"><span>{f.label}<PropTip text={tipOf(f)} /></span>
+        <input value={serializeArg(a)} readOnly title="绑定状态变量，请在代码窗修改" />
+      </label>
+    )
   }
+  return (
+    <label className="prop-row"><span>{f.label}<PropTip text={tipOf(f)} /></span>
+      <input value={a && a.t === 'str' ? a.v : ''} placeholder="未设置"
+        onChange={(e) => setCtorObjField(mut, f.key!, e.target.value === '' ? undefined : { t: 'str', v: e.target.value })} />
+    </label>
+  )
+}
+
+/** ctorObjBool：bool 可编辑；绑定状态变量时只读 */
+function CtorObjBoolField({ f, node, mut }: { f: FieldSpec; node: IRNode; mut: Mut }) {
+  const a = ctorObj(node)?.[f.key!]
+  if (a && a.t !== 'bool') {
+    return (
+      <label className="prop-row"><span>{f.label}<PropTip text={tipOf(f)} /></span>
+        <input value={serializeArg(a)} readOnly title="绑定状态变量，请在代码窗修改" />
+      </label>
+    )
+  }
+  const v = a && a.t === 'bool' ? String(a.v) : ''
+  return (
+    <label className="prop-row"><span>{f.label}<PropTip text={tipOf(f)} /></span>
+      <select value={v}
+        onChange={(e) => setCtorObjField(mut, f.key!, e.target.value === '' ? undefined : { t: 'bool', v: e.target.value === 'true' })}>
+        <option value="">（未设置）</option>
+        <option value="true">true</option>
+        <option value="false">false</option>
+      </select>
+    </label>
+  )
+}
+
+function CtorObjEnumField({ f, node, mut }: { f: FieldSpec; node: IRNode; mut: Mut }) {
+  const a = ctorObj(node)?.[f.key!]
+  const v = a && a.t === 'enum' ? a.v : undefined
+  return (
+    <EnumField label={f.label} value={v} options={f.options ?? []} allowUnset={f.allowUnset} tip={tipOf(f)}
+      onSet={(x) => {
+        if (x === undefined) { if (f.allowUnset !== false) setCtorObjField(mut, f.key!, undefined); return }
+        setCtorObjField(mut, f.key!, { t: 'enum', v: x })
+      }} />
+  )
+}
+
+/** 按 ComponentSpec.fields 渲染专属编辑区；无 fields 返回 null（仅通用区兜底） */
+function SchemaFields({ spec, node, mut }: { spec: ComponentSpec; node: IRNode; mut: Mut }) {
+  if (!spec.fields || spec.fields.length === 0) return null
+  const objNum = (k: string) => { const a = ctorObj(node)?.[k]; return a && a.t === 'num' ? a.v : undefined }
+  return (
+    <>
+      {spec.fields.map((f, i) => {
+        const key = `${f.kind}-${f.mod ?? f.key ?? f.label}-${i}`
+        switch (f.kind) {
+          case 'num':
+            return <NumField key={key} label={f.label} tip={tipOf(f)} value={numModGet(node, f.mod!)} onSet={numModSet(mut, f.mod!)} />
+          case 'size':
+            return <SizeField key={key} label={f.label} mod={f.mod!} node={node} mut={mut} />
+          case 'boxnum':
+            return <BoxNumField key={key} label={f.label} mod={f.mod!} node={node} mut={mut} />
+          case 'str':
+            return <StrModField key={key} label={f.label} mod={f.mod!} node={node} mut={mut} tip={tipOf(f)} />
+          case 'enum':
+            return <EnumModField key={key} label={f.label} mod={f.mod!} options={f.options ?? []} node={node} mut={mut} tip={tipOf(f)} />
+          case 'bool':
+            return <BoolModField key={key} label={f.label} mod={f.mod!} node={node} mut={mut} tip={tipOf(f)} />
+          case 'color':
+            return <ColorModField key={key} label={f.label} mod={f.mod!} node={node} mut={mut} tip={tipOf(f)} />
+          case 'xy':
+            return <XYModField key={key} label={f.label} mod={f.mod!} node={node} mut={mut} />
+          case 'ctorText':
+            return <CtorTextField key={key} label={f.label} node={node} mut={mut} />
+          case 'ctorObjNum':
+            return <NumField key={key} label={f.label} tip={tipOf(f)} value={objNum(f.key!)}
+              onSet={(v) => setCtorObjField(mut, f.key!, v === undefined ? undefined : { t: 'num', v })} />
+          case 'ctorObjStr':
+            return <CtorObjStrField key={key} f={f} node={node} mut={mut} />
+          case 'ctorObjEnum':
+            return <CtorObjEnumField key={key} f={f} node={node} mut={mut} />
+          case 'ctorObjBool':
+            return <CtorObjBoolField key={key} f={f} node={node} mut={mut} />
+          default:
+            return null
+        }
+      })}
+    </>
+  )
 }
 
 /* ---------- 全部修饰符区（任意属性兜底：可删、可按原文新增） ---------- */
@@ -463,6 +438,9 @@ function StructuralInfo({ node }: { node: IRNode }) {
 
 /* ---------- 面板主体 ---------- */
 
+const VISIBILITIES = ['Visibility.Visible', 'Visibility.Hidden', 'Visibility.None']
+const ITEM_ALIGNS = ['ItemAlign.Auto', 'ItemAlign.Start', 'ItemAlign.Center', 'ItemAlign.End', 'ItemAlign.Stretch', 'ItemAlign.Baseline']
+
 export function PropertyPanel() {
   const { ir, selectedPath, mutateNode, removeNode } = useStore()
 
@@ -474,6 +452,7 @@ export function PropertyPanel() {
 
   const p: Path = selectedPath
   const mut: Mut = (fn) => mutateNode(p, fn)
+  const spec = getSpec(node.type)
 
   return (
     <div className="prop">
@@ -482,31 +461,31 @@ export function PropertyPanel() {
         <span className="prop-path">路径 [{p.join(',')}]</span>
         <button className="prop-del" onClick={() => removeNode(p)} disabled={p.length === 0}>删除</button>
       </div>
-      {STRUCTURAL.has(node.type) ? (
+      {isStructural(node.type) ? (
         <StructuralInfo node={node} />
       ) : (
         <>
-          <SpecificFields node={node} mut={mut} />
+          {spec && <SchemaFields spec={spec} node={node} mut={mut} />}
           <div className="prop-sec">通用 · 布局</div>
           <SizeField label="width" mod="width" node={node} mut={mut} />
           <SizeField label="height" mod="height" node={node} mut={mut} />
           <BoxNumField label="padding" mod="padding" node={node} mut={mut} />
           <BoxNumField label="margin" mod="margin" node={node} mut={mut} />
-          <NumField label="layoutWeight" value={numModifier(node, 'layoutWeight')} onSet={(v) => v === undefined ? removeMod(mut, 'layoutWeight') : setMod(mut, 'layoutWeight', [{ t: 'num', v }])} />
-          <NumField label="flexGrow" value={numModifier(node, 'flexGrow')} onSet={(v) => v === undefined ? removeMod(mut, 'flexGrow') : setMod(mut, 'flexGrow', [{ t: 'num', v }])} />
-          <NumField label="flexShrink" value={numModifier(node, 'flexShrink')} onSet={(v) => v === undefined ? removeMod(mut, 'flexShrink') : setMod(mut, 'flexShrink', [{ t: 'num', v }])} />
+          <NumField label="layoutWeight" value={numModGet(node, 'layoutWeight')} onSet={numModSet(mut, 'layoutWeight')} />
+          <NumField label="flexGrow" value={numModGet(node, 'flexGrow')} onSet={numModSet(mut, 'flexGrow')} />
+          <NumField label="flexShrink" value={numModGet(node, 'flexShrink')} onSet={numModSet(mut, 'flexShrink')} />
           <EnumModField label="alignSelf" mod="alignSelf" options={ITEM_ALIGNS} node={node} mut={mut} />
           <XYModField label="position" mod="position" node={node} mut={mut} />
           <XYModField label="offset" mod="offset" node={node} mut={mut} />
-          <NumField label="zIndex" value={numModifier(node, 'zIndex')} onSet={(v) => v === undefined ? removeMod(mut, 'zIndex') : setMod(mut, 'zIndex', [{ t: 'num', v }])} />
-          <NumField label="aspectRatio" value={numModifier(node, 'aspectRatio')} onSet={(v) => v === undefined ? removeMod(mut, 'aspectRatio') : setMod(mut, 'aspectRatio', [{ t: 'num', v }])} />
+          <NumField label="zIndex" value={numModGet(node, 'zIndex')} onSet={numModSet(mut, 'zIndex')} />
+          <NumField label="aspectRatio" value={numModGet(node, 'aspectRatio')} onSet={numModSet(mut, 'aspectRatio')} />
           <EnumModField label="visibility" mod="visibility" options={VISIBILITIES} node={node} mut={mut} />
           <BoolModField label="enabled" mod="enabled" node={node} mut={mut} />
           <div className="prop-sec">通用 · 外观</div>
           <ColorModField label="backgroundColor" mod="backgroundColor" node={node} mut={mut} />
-          <NumField label="opacity" step="0.1" value={numModifier(node, 'opacity')} onSet={(v) => v === undefined ? removeMod(mut, 'opacity') : setMod(mut, 'opacity', [{ t: 'num', v: Math.max(0, Math.min(1, v)) }])} />
-          <NumField label="borderRadius" value={numModifier(node, 'borderRadius')} onSet={(v) => v === undefined ? removeMod(mut, 'borderRadius') : setMod(mut, 'borderRadius', [{ t: 'num', v }])} />
-          <NumField label="borderWidth" value={numModifier(node, 'borderWidth')} onSet={(v) => v === undefined ? removeMod(mut, 'borderWidth') : setMod(mut, 'borderWidth', [{ t: 'num', v }])} />
+          <NumField label="opacity" step="0.1" value={numModGet(node, 'opacity')} onSet={(v) => numModSet(mut, 'opacity')(v === undefined ? undefined : Math.max(0, Math.min(1, v)))} />
+          <NumField label="borderRadius" value={numModGet(node, 'borderRadius')} onSet={numModSet(mut, 'borderRadius')} />
+          <NumField label="borderWidth" value={numModGet(node, 'borderWidth')} onSet={numModSet(mut, 'borderWidth')} />
           <ColorModField label="borderColor" mod="borderColor" node={node} mut={mut} />
           <StrModField label="id" mod="id" node={node} mut={mut} />
           <div className="prop-sec">全部修饰符</div>

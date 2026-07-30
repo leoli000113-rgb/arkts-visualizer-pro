@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useStore } from '../store/store'
 import { deviceList, getDeviceProfile, saveDeviceOverride, resetDeviceOverrides } from '../devices/devices'
 
@@ -63,10 +63,14 @@ export function DeviceEditor({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<'edit' | 'add'>('edit')
   const [newName, setNewName] = useState('')
 
-  useEffect(() => {
+  // 切换设备/模式时重置表单与提示：render 期间调整状态（官方推荐替代 effect 同步的模式）
+  const syncKey = `${mode}:${model}`
+  const [prevSync, setPrevSync] = useState(syncKey)
+  if (syncKey !== prevSync) {
+    setPrevSync(syncKey)
     if (mode === 'edit') setForm(loadForm(model))
     setMsg('')
-  }, [model, mode])
+  }
 
   const valid = form.foldable
     ? parseDims(form.unfolded) && parseDims(form.folded)

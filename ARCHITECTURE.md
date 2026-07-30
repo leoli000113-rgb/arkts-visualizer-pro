@@ -30,7 +30,8 @@
 ```
 
 - 代码文本和画布都是 IR 的"视图"；编辑只改 IR，代码窗是序列化结果。
-- 技术栈：React 18 + Vite + TypeScript + Zustand（+ vitest）。无后端，localStorage 持久化。
+- 技术栈：React 18 + Vite + TypeScript + Zustand + CodeMirror 6（+ vitest + ESLint）。无后端，localStorage 持久化。
+- **Component Registry（`app/src/registry/`）是组件知识的唯一真相源**：每个组件一份 ComponentSpec（分类/容器/约束/默认节点/专属属性 schema/大纲摘要）。面板分组、dnd 容器集、子类型/独子约束、属性面板专属区、大纲树摘要全部从 registry 派生——新增一个组件只需在 `registry/specs.ts` 加一份声明（渲染器视图除外）。
 - 工程在 `app/`；`start.bat` 一键启动。
 
 ## 3. UI / 非 UI 分离模型（最重要的设计）
@@ -82,15 +83,21 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 
 ## 5. 编辑能力清单
 
-- 拖放：面板 → 画布/大纲树（before/inside/after 三态落点）；同父/跨容器搬运；Stack 内按坐标自由摆放（`.position`）。
+- 拖放：面板 → 画布/大纲树（before/inside/after 三态落点）；同父/跨容器搬运；Stack 内按坐标自由摆放（`.position`）；拖拽中有跟手标签（ghost）。
 - **Alt + 拖拽** = 任意组件自由偏移（`.offset`，不改结构）；右/下/右下三个把手改宽/高/同时改。
-- 大纲树：点击选中（双向联动）、树内拖放重排/换父。
+- **对齐吸附**：Alt 偏移与 Stack 落点时，±3vp 内自动吸附兄弟/容器的边缘与中线，并绘制玫红参考线。
+- 大纲树：点击选中（双向联动）、容器节点 ▸/▾ 收合、树内拖放重排/换父。
 - 右键菜单：选中父级/上移下移/创建副本/包裹进容器/复制节点代码/删除。
-- 属性面板：按类型的专属编辑 + 全量通用属性（布局+外观）+ 感叹号中文说明 + 「全部修饰符」兜底（可增删任意修饰符）。
+- 属性面板：**专属区由 registry 的 FieldSpec schema 驱动** + 全量通用属性（布局+外观）+ 感叹号中文说明 + 「全部修饰符」兜底（可增删任意修饰符）。
 - 撤销/重做（Ctrl+Z/Y，50 步；连续手势合并为一步）、Delete 删除。
-- 顶栏：复制代码、导出 .ets、设备切换/折叠态、设备档案编辑/新增、编译风险警示。
+- 节点剪贴簿：Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+V 粘贴（选中容器可接收则放入其内，否则落到选中节点之后；粘贴同样过子类型/独子约束）/ Ctrl+D 创建副本。
+- 画布缩放：左上缩放条（−/百分比点按重置/+ /适应窗口，0.2–2 持久化）；实现为 phone-frame 的 CSS transform，渲染内部仍以 1vp = 0.6px 为基准，dnd/resize 的指针换算统一走 `pxPerVp() = 0.6 × zoom`。
+- 侧栏搜索框：组件（按组名/组件名）/ 组件库 / 模板（按名称/描述）三页签共用过滤。
+- 模板：**即时缩图预览**（renderer 直接渲染模板 IR 的缩略卡）；套用可撤销——`setCode(code, { keepHistory: true })` 把当前页压入历史栈；普通代码源变更（导入/手改/重置）仍清空两栈。
+- 代码窗：**CodeMirror 6**（TS 高亮/行号/括号匹配），输入防抖 400ms 解析（失焦立即 flush）；**解析失败保留最后一次成功的 IR**——画布不闪白，错误在代码窗顶部红色横幅 + 编辑器内 lint 标记（gutter 红点，位置由 parser 报错文本提取）展示。
+- 顶栏：复制代码、导出 .ets、设备切换/折叠态、设备档案编辑/新增、编译风险警示、快捷键说明弹窗（?）。
 
-## 6. 测试策略（74 项，防退化锚点）
+## 6. 测试策略（89 项，防退化锚点）
 
 ```
 parser.test.ts      v1 子集 + sample_full 全景：往返幂等、If/ForEach/raw
@@ -98,7 +105,8 @@ preserve.test.ts    真实工程文件全保留（ fixtures/real_page.ets ）：
                     preamble/成员原文/顺序/往返幂等/「只改 UI 不动方法区」
 builder.test.ts     @Builder 结构化、镜像、编辑写回定义、幂等
 validate.test.ts    编译约束校验（Scroll 独子等，对齐 hvigor 报错）
-store.test.ts       撤销重做/手势合并/右键菜单动作/22 种默认值往返
+store.test.ts       撤销重做/手势合并/右键菜单动作/剪贴簿/模板历史/22 种默认值往返
+registry.test.ts    registry 完整性：SUPPORTED 全覆盖/面板分组/默认节点往返/约束派生
 fidelity.test.tsx   颜色通道/序列化补齐/通用属性 CSS 映射/默认外观
 renderer.test.tsx   SSR 冒烟：sample.ets 不回归、sample_full 全树关键内容
 ```
@@ -124,13 +132,18 @@ renderer.test.tsx   SSR 冒烟：sample.ets 不回归、sample_full 全树关键
 ```
 app/src/
 ├─ parser/     tokenizer（pos/end/comment）+ parser（外科手术式）+ fixtures + 测试
-├─ ir/         types（IRFile/IRNode/ArgVal）+ mutate + serialize + validate + defaults
+├─ ir/         types（IRFile/IRNode/ArgVal）+ mutate + serialize + validate
+│              + defaults/constraints（薄转接层，实现见 registry）
+├─ registry/   ★ 组件注册表：types（ComponentSpec/FieldSpec）+ specs（25+ 组件声明）
+│              + index（getSpec/面板分组/约束派生/makeDefaultNode/nodeSummary）+ 测试
 ├─ renderer/   shared（styleOf/color/frameOf）+ Renderer + containers/forms/feedback/flow
 │              + RelativeContainer（约束求解引擎）+ resize
-├─ editor/     dnd（落点/约束/Alt 偏移/Stack 定位）+ OutlineTree + PropertyPanel
-│              + DeviceEditor + ContextMenu
+├─ editor/     dnd（落点/Alt 偏移/Stack 定位/吸附参考线/拖拽 ghost）+ OutlineTree
+│              + PropertyPanel（schema 驱动）+ DeviceEditor + ContextMenu
+├─ panels/     TopBar + SidePanel（组件/组件库/模板+搜索）+ ZoomBar + CodePane
+│              （CodeMirror）+ HelpModal + TemplateThumb
 ├─ devices/    devices.json（官网校准）+ 覆盖层
-└─ store/      Zustand store（IR/历史/持久化/设备版本）
+└─ store/      Zustand store（IR/历史/持久化/设备版本/缩放/剪贴簿）
 ```
 
 ## 9. 常用命令
@@ -140,5 +153,6 @@ cd app
 npm run dev         # 开发（或双击项目根 start.bat）
 npm run typecheck   # tsc --noEmit
 npx vitest run      # 全部测试
+npm run lint        # ESLint（flat config）
 npm run build       # 产物 dist/（纯静态，可任意托管）
 ```

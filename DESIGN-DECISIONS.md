@@ -355,3 +355,23 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - 测试 75/75 绿（新增 aids 开/关对照断言）。
 
 
+
+## 16. 易用性批次（2026-07-28）
+
+- **模板套用可撤销**：`setCode(code, { keepHistory: true })` 把当前页压入历史栈，误点模板可 Ctrl+Z 撤回；导入/手改/重置仍清空两栈（代码源 = 新历史起点的设计不变）。
+- **解析失败不闪白**：setCode 失败时保留最后一次成功的 IR，错误原因在代码窗顶部红色横幅展示（此前 ir 置 null、画布直接空白）。
+- **画布缩放**：0.2–2 持久化；实现为 phone-frame 的 CSS transform，渲染内部仍以 1vp = 0.6px 为基准；dnd/resize 的指针换算统一走 `pxPerVp() = 0.6 × zoom`（屏幕 px ↔ vp），任何缩放下拖放/Alt 偏移/把手改尺寸精度不变。
+- **节点剪贴簿**：Ctrl+C/X/V/D；粘贴遵循子类型/独子约束（选中容器可接收则入内，否则落到选中节点之后）。约束定义从 dnd 抽到 `ir/constraints.ts`（后又被 registry 吸收）。
+- **侧栏搜索 / 代码窗防抖 400ms**（textarea 时代）。
+
+## 17. Component Registry 架构重构 + 编辑器体验升级（2026-07-28）
+
+针对「组件知识散落 7 处，加一个组件要改一堆文件」的根本问题：
+
+- **Component Registry（`src/registry/`）**：每个组件一份 `ComponentSpec` 声明（分类/容器/子类型白名单/独子/默认节点工厂/专属属性 schema/大纲摘要），是唯一真相源。`ir/defaults.ts` 与 `ir/constraints.ts` 变为薄转接层（API 不变）；dnd 容器集、App 面板分组、OutlineTree 摘要全部从 registry 派生。
+- **属性面板 schema 驱动**：`SpecificFields` 的手写 switch 改为按 `FieldSpec[]` 渲染（13 种字段 kind），新增组件的专属属性区只需在 spec 里声明；面板 518 → ~420 行且不再有 per-type 分支。
+- **代码窗升级 CodeMirror 6**（@uiw/react-codemirror）：TS 高亮/行号/括号匹配；parser 报错文本中的「位置 N」映射为编辑器内 lint 标记（gutter 红点 + 波浪线）；保留 400ms 防抖与外部同步。
+- **App.tsx 拆分为 panels/**：TopBar / SidePanel / ZoomBar / CodePane / HelpModal / TemplateThumb；App.tsx 只剩组装与快捷键（~110 行）。
+- **交互抛光**：大纲树容器收合（▸/▾）、拖拽跟手标签（ghost）、Stack 对齐吸附（±3vp 吸附兄弟/容器边缘中线，绘制玫红参考线，Alt 偏移与 Stack 落点都生效）、模板即时缩图（renderer 直接渲染模板 IR 缩略预览，GrapesJS 式 block card）、快捷键说明弹窗（顶栏 ?）。
+- **工具链**：补 ESLint 9 flat config（typescript-eslint + react-hooks），存量告警清零（DeviceEditor 改 render 期调整状态模式、CodePane 去掉 render 期写 ref）。
+- 回归锚点：`registry/registry.test.ts` 8 项（SUPPORTED 全覆盖/面板分组顺序/palette 默认节点往返幂等/约束派生一致）。测试 89/89 绿，typecheck/build/eslint 全绿。

@@ -4,6 +4,7 @@ import { parse } from '../parser/parser'
 import { serialize } from '../ir/serialize'
 import { IRFile, IRNode } from '../ir/types'
 import { Path, updateNodeAtPath, removeNodeAtPath, insertChildAtPath, getNodeAtPath, samePath } from '../ir/mutate'
+import { acceptsChild, canAcceptMore } from '../ir/constraints'
 import sampleSrc from '../assets/sample.ets?raw'
 import type { DropTarget } from '../editor/dnd'
 
@@ -22,10 +23,18 @@ interface StoreState {
   future: IRFile[]
   /** 设备档案变更计数：saveDeviceOverride/resetDeviceOverrides 后 +1 触发重渲 */
   deviceVersion: number
+  /** 画布缩放倍率（0.2–2，持久化）；渲染内部仍以 1vp = 0.6 CSS px 为基准，缩放靠 CSS transform */
+  zoom: number
+  setZoom: (z: number) => void
+  /** 节点剪贴簿（Ctrl+C/X/V，深拷贝 IRNode，不持久化） */
+  clipboard: IRNode | null
+  copyNode: (path: Path) => void
+  cutNode: (path: Path) => void
+  pasteNode: () => void
   /** 辅助标记：是否在画布上显示 ƒ/if/ForEach 角标与 builder 标签（默认关，页面即所得） */
   showAids: boolean
   setShowAids: (v: boolean) => void
-  setCode: (c: string) => void
+  setCode: (c: string, opts?: { keepHistory?: boolean }) => void
   setDevice: (m: string) => void
   setFold: (f: 'unfolded' | 'folded') => void
   setSelected: (p: Path | null) => void
@@ -73,13 +82,61 @@ export const useStore = create<StoreState>()(
         deviceVersion: 0,
         showAids: false,
         setShowAids: (v) => set({ showAids: v }),
-        setCode: (c) => {
+        zoom: 1,
+        setZoom: (z) => set({ zoom: Math.min(2, Math.max(0.2, Math.round(z * 100) / 100)) }),
+        clipboard: null,
+        copyNode: (path) => {
+          const s = get()
+          if (!s.ir) return
+          const node = getNodeAtPath(s.ir.root, path)
+          if (node) set({ clipboard: JSON.parse(JSON.stringify(node)) })
+        },
+        cutNode: (path) => {
+          if (path.length === 0) return
+          get().copyNode(path)
+          get().removeNode(path)
+        },
+        pasteNode: () => {
+          const s = get()
+          if (!s.ir || !s.clipboard) return
+          const clip: IRNode = JSON.parse(JSON.stringify(s.clipboard))
+          const sel = s.selectedPath
+          const selNode = sel ? getNodeAtPath(s.ir.root, sel) : undefined
+          let parent: Path = []
+          let index = s.ir.root.children.length
+          if (selNode && acceptsChild(selNode.type, clip.type) && canAcceptMore(selNode)) {
+            // 选中容器可接收（含根容器）→ 放入其末尾
+            parent = sel!
+            index = selNode.children.length
+          } else if (sel && sel.length > 0) {
+            // 否则尝试插入到选中节点之后
+            const pp = sel.slice(0, -1)
+            const pnode = getNodeAtPath(s.ir.root, pp)
+            if (!pnode || !acceptsChild(pnode.type, clip.type) || !canAcceptMore(pnode)) return
+            parent = pp
+            index = sel[sel.length - 1] + 1
+          } else if (selNode) {
+            return // 根被选中但不能接收该类型
+          } else if (!acceptsChild(s.ir.root.type, clip.type) || !canAcceptMore(s.ir.root)) {
+            return // 无选中：放入根末尾，需满足子类型/独子约束
+          }
+          s.insertChild(parent, clip, index)
+        },
+        setCode: (c, opts) => {
           try {
             const ir = parse(c)
-            // 代码源变更（导入/手改/重置）视为新历史起点，清空两栈
-            set({ code: c, ir, error: null, selectedPath: null, dropTarget: null, past: [], future: [] })
+            // 代码源变更（导入/手改/重置）视为新历史起点，清空两栈；
+            // keepHistory（模板套用）则把当前页压入历史，可 Ctrl+Z 撤回
+            const cur = get().ir
+            const keep = !!opts?.keepHistory && !!cur
+            set({
+              code: c, ir, error: null, selectedPath: null, dropTarget: null,
+              past: keep ? [...get().past, cur!].slice(-HISTORY_CAP) : [],
+              future: [],
+            })
           } catch (e: any) {
-            set({ code: c, ir: null, error: String(e?.message || e), selectedPath: null, dropTarget: null, past: [], future: [] })
+            // 解析失败保留最后一次成功的 IR：画布不闪白，错误由代码窗横幅展示原因
+            set({ code: c, error: String(e?.message || e), selectedPath: null, dropTarget: null, past: [], future: [] })
           }
         },
         setDevice: (m) => set({ deviceModel: m }),
@@ -203,8 +260,8 @@ export const useStore = create<StoreState>()(
     },
     {
       name: 'arkts-viz-v1',
-      // 只持久化 code/deviceModel/fold：undo 栈、选中态等均不落盘
-      partialize: (s) => ({ code: s.code, deviceModel: s.deviceModel, fold: s.fold, showAids: s.showAids }),
+      // 只持久化 code/deviceModel/fold/zoom：undo 栈、选中态、剪贴簿等均不落盘
+      partialize: (s) => ({ code: s.code, deviceModel: s.deviceModel, fold: s.fold, showAids: s.showAids, zoom: s.zoom }),
     },
   ),
 )

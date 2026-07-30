@@ -1,7 +1,12 @@
 import { useStore } from '../store/store'
 import { getNodeAtPath, samePath, setModifier, Path } from '../ir/mutate'
+import { acceptsChild, canAcceptMore } from '../ir/constraints'
+import { CONTAINER_TYPES } from '../registry'
 import { IRNode } from '../ir/types'
 import { createNode } from '../ir/defaults'
+
+// 约束定义已迁至 registry（元件注册表）；此处再导出保持既有引用可用
+export { acceptsChild, canAcceptMore, SINGLE_CHILD } from '../ir/constraints'
 
 export type DropPos = 'before' | 'inside' | 'after'
 export interface DropTarget { path: Path; pos: DropPos; parent: Path; index: number; at?: { x: number; y: number } }
@@ -10,38 +15,108 @@ interface Ctx {
   type?: string
   node?: IRNode
   path?: Path
-  /** Alt+拖拽自由偏移：按下时的指针坐标与被拖节点原 offset 值 */
-  freeOffset?: { startX: number; startY: number; baseX: number; baseY: number }
+  /** Alt+拖拽自由偏移：按下时的指针坐标、被拖节点原 offset 值与起始屏幕矩形（吸附用） */
+  freeOffset?: { startX: number; startY: number; baseX: number; baseY: number; rect?: { left: number; top: number; w: number; h: number } }
 }
 
-const CONTAINERS = new Set([
-  'Column', 'Row', 'Stack', 'RelativeContainer', 'Flex',
-  'Scroll', 'List', 'Grid', 'Tabs', 'TabContent', 'If', 'ForEach', 'BuilderCall',
-])
+/** 容器判定（中部落点 = inside）：由 registry 派生 */
+const CONTAINERS = CONTAINER_TYPES
 
-/** 子类型约束：这些容器只接受特定子组件，违反时落点不显示、落下无效 */
-const CHILD_CONSTRAINTS: Record<string, ReadonlySet<string>> = {
-  List: new Set(['ListItem']),
-  Grid: new Set(['GridItem']),
-  Tabs: new Set(['TabContent']),
-}
-
-/** 独子容器（ArkTS 编译约束：只能有一个子组件）：Scroll / TabContent */
-export const SINGLE_CHILD = new Set(['Scroll', 'TabContent'])
-
-/** 容器是否接受某类型子节点（无约束的容器接受任意类型） */
-export function acceptsChild(containerType: string, childType: string): boolean {
-  const allowed = CHILD_CONSTRAINTS[containerType]
-  return !allowed || allowed.has(childType)
-}
-
-/** 独子容器是否还能再接受子节点（以目标父容器的当前子数判断） */
-export function canAcceptMore(container: IRNode): boolean {
-  return !SINGLE_CHILD.has(container.type) || container.children.length === 0
+/** 屏幕像素 → vp 的换算系数（基准 1vp = 0.6 CSS px × 画布缩放） */
+function pxPerVp(): number {
+  return 0.6 * useStore.getState().zoom
 }
 
 let ctx: Ctx | null = null
 let bound = false
+
+/* ---- 拖拽跟手标签（ghost） ---- */
+let ghost: HTMLDivElement | null = null
+function showGhost(label: string) {
+  hideGhost()
+  ghost = document.createElement('div')
+  ghost.className = 'drag-ghost'
+  ghost.textContent = label
+  document.body.appendChild(ghost)
+}
+function moveGhost(x: number, y: number) {
+  if (ghost) { ghost.style.left = x + 'px'; ghost.style.top = y + 'px' }
+}
+function hideGhost() {
+  ghost?.remove()
+  ghost = null
+}
+
+/* ---- 对齐吸附参考线 ---- */
+const SNAP_VP = 3
+const SNAP_PX = () => SNAP_VP * pxPerVp()
+
+let guideEls: HTMLDivElement[] = []
+function clearGuides() {
+  for (const el of guideEls) el.remove()
+  guideEls = []
+}
+function drawGuides(box: DOMRect, vx?: number, hy?: number) {
+  clearGuides()
+  if (vx !== undefined) {
+    const el = document.createElement('div')
+    el.className = 'snap-guide-v'
+    el.style.left = vx + 'px'
+    el.style.top = box.top + 'px'
+    el.style.height = box.height + 'px'
+    document.body.appendChild(el)
+    guideEls.push(el)
+  }
+  if (hy !== undefined) {
+    const el = document.createElement('div')
+    el.className = 'snap-guide-h'
+    el.style.top = hy + 'px'
+    el.style.left = box.left + 'px'
+    el.style.width = box.width + 'px'
+    document.body.appendChild(el)
+    guideEls.push(el)
+  }
+}
+
+/** 画布元素按 path 查找（data-path 由 renderer 写入，root 为空串） */
+function elOf(path: Path): HTMLElement | null {
+  return document.querySelector(`[data-path="${path.join('.')}"]`)
+}
+
+/** 候选对齐线（屏幕 px）：容器边缘/中线 + 各兄弟矩形的左中右 / 上中下 */
+function candidateLines(containerBox: DOMRect, siblingBoxes: DOMRect[]): { vx: number[]; hy: number[] } {
+  const vx = [containerBox.left, containerBox.left + containerBox.width / 2, containerBox.right]
+  const hy = [containerBox.top, containerBox.top + containerBox.height / 2, containerBox.bottom]
+  for (const b of siblingBoxes) {
+    vx.push(b.left, b.left + b.width / 2, b.right)
+    hy.push(b.top, b.top + b.height / 2, b.bottom)
+  }
+  return { vx, hy }
+}
+
+function snapVal(v: number, candidates: number[], thr: number): { v: number; line?: number } {
+  let bestD = Infinity
+  let line: number | undefined
+  for (const c of candidates) {
+    const d = Math.abs(v - c)
+    if (d <= thr && d < bestD) { bestD = d; line = c }
+  }
+  return line === undefined ? { v } : { v: line, line }
+}
+
+/** 矩形三边（起/中/止）逐一尝试吸附，取偏差最小者 */
+function snapEdges(start: number, size: number, candidates: number[], thr: number): { delta: number; line?: number } {
+  let best: { delta: number; line?: number } = { delta: 0 }
+  let bestD = Infinity
+  for (const p of [start, start + size / 2, start + size]) {
+    const r = snapVal(p, candidates, thr)
+    if (r.line !== undefined && Math.abs(r.v - p) < bestD) {
+      bestD = Math.abs(r.v - p)
+      best = { delta: r.v - p, line: r.line }
+    }
+  }
+  return best
+}
 
 function attach() {
   if (bound) return
@@ -57,10 +132,12 @@ function detach() {
 
 export function startNewDrag(type: string) {
   ctx = { kind: 'new', type }
+  showGhost(type)
   attach()
 }
 export function startNewDragNode(node: IRNode) {
   ctx = { kind: 'new', node }
+  showGhost(node.type)
   attach()
 }
 export function startMoveDrag(path: Path, altKey = false) {
@@ -74,13 +151,20 @@ export function startMoveDrag(path: Path, altKey = false) {
     const bx = obj?.x && obj.x.t === 'num' ? obj.x.v : 0
     const by = obj?.y && obj.y.t === 'num' ? obj.y.v : 0
     ctx.freeOffset = { startX: 0, startY: 0, baseX: bx, baseY: by }
+    // 起始屏幕矩形（含基准 offset）：吸附以它为基准平移
+    const r = elOf(path)?.getBoundingClientRect()
+    if (r) ctx.freeOffset.rect = { left: r.left, top: r.top, w: r.width, h: r.height }
     s.pushHistory() // 整个手势合并为一步撤销
   }
+  const t = useStore.getState().ir ? getNodeAtPath(useStore.getState().ir!.root, path)?.type : undefined
+  showGhost((t ?? '组件') + (altKey ? ' · 偏移' : ''))
   attach()
 }
 export function endDrag() {
   ctx = null
   detach()
+  hideGhost()
+  clearGuides()
   useStore.getState().setDropTarget(null)
 }
 
@@ -124,8 +208,8 @@ function onMaybeUp() {
   detachPending()
 }
 
-/** 计算落点（画布与大纲树共用）：bands 判定 before/inside/after 并做约束校验 */
-function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clientX: number, clientY: number): DropTarget | null {
+/** 计算落点（画布与大纲树共用）：bands 判定 before/inside/after 并做约束校验；snap 仅画布开启（Stack 指针吸附） */
+function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clientX: number, clientY: number, snap: boolean): DropTarget | null {
   const node = getNodeAtPath(root, path)
   if (!node) return null
   const parentPath = path.slice(0, -1)
@@ -149,20 +233,62 @@ function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clie
   // Stack 自由定位：inside 落点记录指针坐标（vp），落下时写入子节点 .position({x,y})
   let at: { x: number; y: number } | undefined
   if (pos === 'inside' && node.type === 'Stack') {
-    at = { x: Math.round((clientX - box.left) / 0.6), y: Math.round((clientY - box.top) / 0.6) }
+    const k = pxPerVp()
+    let px = clientX
+    let py = clientY
+    if (snap) {
+      // 指针吸附到兄弟/容器的边缘与中线（±SNAP_VP），并绘制参考线
+      const sibBoxes = node.children
+        .map((_, i) => elOf([...path, i]))
+        .filter((el): el is HTMLElement => !!el)
+        .map(el => el.getBoundingClientRect())
+      const cand = candidateLines(box, sibBoxes)
+      const sx = snapVal(clientX, cand.vx, SNAP_PX())
+      const sy = snapVal(clientY, cand.hy, SNAP_PX())
+      if (sx.line !== undefined || sy.line !== undefined) drawGuides(box, sx.line, sy.line)
+      px = sx.v
+      py = sy.v
+    }
+    at = { x: Math.round((px - box.left) / k), y: Math.round((py - box.top) / k) }
   }
   return { path, pos, parent: parent_, index: idx, at }
 }
 
 function onMove(e: PointerEvent) {
   if (!ctx) return
+  moveGhost(e.clientX, e.clientY)
+  clearGuides()
   const s = useStore.getState()
   if (!s.ir) return
   // Alt+拖拽自由偏移：实时改写 .offset({x,y})（vp，1 位小数），不产生落点
   if (ctx.freeOffset && ctx.path) {
+    const dragPath = ctx.path
     const fo = ctx.freeOffset
-    const ox = Math.round((fo.baseX + (e.clientX - fo.startX) / 0.6) * 10) / 10
-    const oy = Math.round((fo.baseY + (e.clientY - fo.startY) / 0.6) * 10) / 10
+    let ox = Math.round((fo.baseX + (e.clientX - fo.startX) / pxPerVp()) * 10) / 10
+    let oy = Math.round((fo.baseY + (e.clientY - fo.startY) / pxPerVp()) * 10) / 10
+    // 吸附：被拖矩形（起始矩形 + 位移）的边缘/中线对齐兄弟与父容器
+    if (fo.rect) {
+      const k = pxPerVp()
+      const parentPath = dragPath.slice(0, -1)
+      const parentEl = elOf(parentPath)
+      const parentNode = getNodeAtPath(s.ir.root, parentPath)
+      if (parentEl && parentNode) {
+        const sibBoxes = parentNode.children
+          .map((_, i) => [...parentPath, i])
+          .filter(p => !samePath(p, dragPath))
+          .map(p => elOf(p))
+          .filter((el): el is HTMLElement => !!el)
+          .map(el => el.getBoundingClientRect())
+        const cand = candidateLines(parentEl.getBoundingClientRect(), sibBoxes)
+        const wantL = fo.rect.left + (ox - fo.baseX) * k
+        const wantT = fo.rect.top + (oy - fo.baseY) * k
+        const sx = snapEdges(wantL, fo.rect.w, cand.vx, SNAP_PX())
+        const sy = snapEdges(wantT, fo.rect.h, cand.hy, SNAP_PX())
+        if (sx.line !== undefined) ox = Math.round((ox + sx.delta / k) * 10) / 10
+        if (sy.line !== undefined) oy = Math.round((oy + sy.delta / k) * 10) / 10
+        if (sx.line !== undefined || sy.line !== undefined) drawGuides(parentEl.getBoundingClientRect(), sx.line, sy.line)
+      }
+    }
     s.mutateNode(ctx.path, n2 => setModifier(n2, 'offset', [{ t: 'obj', v: { x: { t: 'num', v: ox }, y: { t: 'num', v: oy } } }]), { history: false })
     return
   }
@@ -174,7 +300,7 @@ function onMove(e: PointerEvent) {
     const path: Path = pathStr === '' ? [] : pathStr.split('.').map(Number)
     const box = treeRow.getBoundingClientRect()
     const ratio = (e.clientY - box.top) / (box.height || 1)
-    s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY))
+    s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY, false))
     return
   }
   // 画布落点
@@ -193,7 +319,7 @@ function onMove(e: PointerEvent) {
   const ry = (e.clientY - box.top) / h
   const horizontal = parent?.type === 'Row'
   const ratio = horizontal ? rx : ry
-  s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY))
+  s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY, true))
 }
 
 function onUp() {
