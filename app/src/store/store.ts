@@ -5,6 +5,8 @@ import { serialize } from '../ir/serialize'
 import { IRFile, IRNode } from '../ir/types'
 import { Path, updateNodeAtPath, removeNodeAtPath, insertChildAtPath, getNodeAtPath, samePath } from '../ir/mutate'
 import { acceptsChild, canAcceptMore } from '../ir/constraints'
+import { extractStyles, StyleTables } from '../renderer/styleTable'
+import { extractComponents, buildersOf, BuilderDef } from '../renderer/components'
 import sampleSrc from '../assets/sample.ets?raw'
 import type { DropTarget } from '../editor/dnd'
 
@@ -31,6 +33,12 @@ interface StoreState {
   copyNode: (path: Path) => void
   cutNode: (path: Path) => void
   pasteNode: () => void
+  /** @Styles/@Extend 定义表（随 setCode 派生；UI 编辑不动 members，无需随 mutate 重算） */
+  stylesTable: StyleTables
+  /** 同文件自定义组件表（随 setCode 从 postamble 派生） */
+  components: Record<string, IRFile>
+  /** @Builder 定义表（随 setCode 派生，带参调用点只读替换渲染用） */
+  builders: Record<string, BuilderDef>
   /** 辅助标记：是否在画布上显示 ƒ/if/ForEach 角标与 builder 标签（默认关，页面即所得） */
   showAids: boolean
   setShowAids: (v: boolean) => void
@@ -85,6 +93,9 @@ export const useStore = create<StoreState>()(
         zoom: 1,
         setZoom: (z) => set({ zoom: Math.min(2, Math.max(0.2, Math.round(z * 100) / 100)) }),
         clipboard: null,
+        stylesTable: { styles: {}, extends: {} },
+        components: {},
+        builders: {},
         copyNode: (path) => {
           const s = get()
           if (!s.ir) return
@@ -131,6 +142,9 @@ export const useStore = create<StoreState>()(
             const keep = !!opts?.keepHistory && !!cur
             set({
               code: c, ir, error: null, selectedPath: null, dropTarget: null,
+              stylesTable: extractStyles(ir),
+              components: extractComponents(ir),
+              builders: buildersOf(ir),
               past: keep ? [...get().past, cur!].slice(-HISTORY_CAP) : [],
               future: [],
             })

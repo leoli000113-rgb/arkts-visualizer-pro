@@ -10,6 +10,7 @@ const ALL_TYPES = [
   'Text', 'Button', 'Image', 'Column', 'Row', 'Stack', 'RelativeContainer',
   'Flex', 'Scroll', 'List', 'ListItem', 'Grid', 'GridItem', 'Tabs', 'TabContent',
   'TextInput', 'Toggle', 'Slider', 'Checkbox', 'Radio', 'Progress', 'Video',
+  'Divider', 'Blank', 'Badge', 'Rating',
 ]
 
 function wrap(child: ReturnType<typeof createNode>): IRFile {

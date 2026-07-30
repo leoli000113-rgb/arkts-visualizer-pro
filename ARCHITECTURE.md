@@ -78,7 +78,13 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 - **单位**：1 vp = 0.6 CSS px（常数）；设备 vp 维度 = round(px × 160 / dpi)。设备档案来自华为官网校准（`devices.json` 带 source URL），应用内可编辑/新增（localStorage 覆盖层）。
 - **颜色**：数值 ≤0xFFFFFF 为不透明 RGB；8 位为 **AARRGGBB（ArkTS）→ RRGGBBAA（CSS）** 通道重排；`Color.*` 枚举映射；`'#4a5568'`/`'rgba(...)'` 字符串直通；序列化按值域补 6/8 位（高位 0 不丢）。
 - **默认对齐**：Column 交叉轴默认 Center、Row 交叉轴默认 Center（不是 CSS 的 stretch）；基准字号 16fp = 9.6 CSS px；Button 默认胶囊 + 主题蓝 #0A59F7 白字。
-- **定位**：position（绝对）/offset（transform 平移）/zIndex/alignSelf/visibility/constraintSize 等都落地渲染。
+- **定位/变换**：position/offset/zIndex/alignSelf/visibility/constraintSize + translate/rotate/scale（transform 合成）。
+- **表达式小求值**（`shared.evalExpr`，禁 eval）：字面量/`this.x`/三元/比较/&& || ??/!/加减乘除/拼接/成员访问（`.prop` `?.prop` `[i]`，含 `.length`），求不出一律回退原文。styleOf 与 resolveStr/Num/Bool 全部走求值感知版；`if` 条件折叠同样走求值器。
+- **@Styles/@Extend 展开**：`@Styles name()` 与 `@Extend(Comp) name()`（struct 成员与全局 function 均支持）解析成样式表（`renderer/styleTable.ts`）；0 参样式调用在 styleOf 就地展开（@Extend 组件专属优先），本机后续修饰符自然覆盖。
+- **同文件自定义组件渲染**：postamble 里的 `@Component struct` 逐个解析成组件 IR 表（`renderer/components.ts`）；未收录类型按名命中即渲染其 build()，调用点 obj 参数按名覆盖组件内字段/@State 初值（含 raw 成员字面量字段提取）。实例内部只读（pointer-events 穿透），递归深度限 3；跨文件 import 的组件仍是占位卡。
+- **@Builder 带参调用**：调用点参数可静态求值时，按名替换进定义体做只读渲染（ForEach 内 `this.buildCard(item)` 经 substRawText 先替换再求值）；不可求值保持 Expr 徽标。无参调用点维持可编辑镜像。
+- **ForEach 对象数组**：数据源支持对象字面量（尾逗号容忍），模板内 `item.name` 成员访问、`'前缀' + item.n` 拼接、`(item, index)` 双参数替换。
+- **修饰符覆盖**：shadow/linearGradient/border(obj)/textOverflow/letterSpacing/lineHeight/fontStyle/fontFamily/clip/blur/backdropBlur/backgroundImage(Size) 等常用修饰符均有映射。
 - **编译安全**：独子容器（Scroll/TabContent）与 List/Grid/Tabs 子类型约束在**拖放落点时拦截**，另有 `ir/validate.ts` 实时校验并在顶栏报警（对齐 hvigor 报错文案）。
 
 ## 5. 编辑能力清单
@@ -97,7 +103,7 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 - 代码窗：**CodeMirror 6**（TS 高亮/行号/括号匹配），输入防抖 400ms 解析（失焦立即 flush）；**解析失败保留最后一次成功的 IR**——画布不闪白，错误在代码窗顶部红色横幅 + 编辑器内 lint 标记（gutter 红点，位置由 parser 报错文本提取）展示。
 - 顶栏：复制代码、导出 .ets、设备切换/折叠态、设备档案编辑/新增、编译风险警示、快捷键说明弹窗（?）。
 
-## 6. 测试策略（89 项，防退化锚点）
+## 6. 测试策略（114 项，防退化锚点）
 
 ```
 parser.test.ts      v1 子集 + sample_full 全景：往返幂等、If/ForEach/raw
@@ -108,6 +114,8 @@ validate.test.ts    编译约束校验（Scroll 独子等，对齐 hvigor 报错
 store.test.ts       撤销重做/手势合并/右键菜单动作/剪贴簿/模板历史/22 种默认值往返
 registry.test.ts    registry 完整性：SUPPORTED 全覆盖/面板分组/默认节点往返/约束派生
 fidelity.test.tsx   颜色通道/序列化补齐/通用属性 CSS 映射/默认外观
+fidelity2.test.tsx  evalExpr 求值器/ForEach 对象数组与 index/@Styles/@Extend 展开/
+                    自定义组件/@Builder 带参/修饰符包/新组件冒烟
 renderer.test.tsx   SSR 冒烟：sample.ets 不回归、sample_full 全树关键内容
 ```
 
@@ -121,11 +129,11 @@ renderer.test.tsx   SSR 冒烟：sample.ets 不回归、sample_full 全树关键
 
 ## 7. 已知边界（诚实清单）
 
-- @Builder 带参数调用（`this.buildCard(item)`）不镜像（参数绑定无法静态解析），保留 Expr 原文。
-- 一个 builder 多次调用时只镜像第一个调用点。
-- 表达式不求值（除 ForEach 简单替换/If 布尔初值）；事件（onClick/onChange）不模拟逻辑。
+- @Builder 带参调用为**只读替换渲染**（编辑请走定义处或无参镜像）；一个 builder 多次调用时只镜像第一个无参调用点。
+- 表达式走 evalExpr 小求值（三元/比较/逻辑/加减乘除/拼接/成员访问）；函数调用、复杂链式调用不求值——一律回退原文，不猜。事件（onClick/onChange）不模拟逻辑。
+- 自定义组件只解析同文件 struct（跨文件 import 仍占位）；实例内部只读不可编辑；组件定义本身在 postamble 原文保留，不在画布编辑。
+- 资源（$r 图片/字体文件）无法加载，以占位呈现。
 - 预览是语义级还原（vp 布局 0 误差），物理像素级以真机为准。
-- 多 struct / 自定义组件在 postamble 原文保留，不在画布编辑。
 
 ## 8. 目录速查
 
@@ -136,14 +144,15 @@ app/src/
 │              + defaults/constraints（薄转接层，实现见 registry）
 ├─ registry/   ★ 组件注册表：types（ComponentSpec/FieldSpec）+ specs（25+ 组件声明）
 │              + index（getSpec/面板分组/约束派生/makeDefaultNode/nodeSummary）+ 测试
-├─ renderer/   shared（styleOf/color/frameOf）+ Renderer + containers/forms/feedback/flow
-│              + RelativeContainer（约束求解引擎）+ resize
+├─ renderer/   shared（styleOf/color/frameOf/evalExpr 求值器）+ Renderer
+│              + containers/forms/feedback/flow + RelativeContainer（约束求解引擎）
+│              + styleTable（@Styles 提取）+ components（同文件组件提取）+ resize
 ├─ editor/     dnd（落点/Alt 偏移/Stack 定位/吸附参考线/拖拽 ghost）+ OutlineTree
-│              + PropertyPanel（schema 驱动）+ DeviceEditor + ContextMenu
+│              + PropertyPanel（schema 驱动）+ DeviceEditor + ContextMenu + ErrorBoundary
 ├─ panels/     TopBar + SidePanel（组件/组件库/模板+搜索）+ ZoomBar + CodePane
 │              （CodeMirror）+ HelpModal + TemplateThumb
 ├─ devices/    devices.json（官网校准）+ 覆盖层
-└─ store/      Zustand store（IR/历史/持久化/设备版本/缩放/剪贴簿）
+└─ store/      Zustand store（IR/历史/持久化/设备版本/缩放/剪贴簿/样式表/组件表）
 ```
 
 ## 9. 常用命令

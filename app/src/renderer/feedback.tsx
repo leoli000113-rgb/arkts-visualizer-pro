@@ -1,5 +1,6 @@
 import React from 'react'
-import { ViewProps, frameOf, ctorObj, resolveNum } from './shared'
+import { getModifier, numModifier } from '../ir/mutate'
+import { ViewProps, frameOf, ctorObj, resolveNum, resolveColor, vp } from './shared'
 
 /**
  * 反馈组件组：Progress / Video。
@@ -52,6 +53,57 @@ export function VideoView({ node, path, ctx }: ViewProps) {
       ...f.style,
     }}>
       [Video: {src}]
+      {f.indicator}
+      {f.handles}
+    </div>
+  )
+}
+
+/** Divider：默认水平分割线（1px #E5E5E5 全宽）；.vertical(true) 竖线；.strokeWidth/.color 可覆盖 */
+export function DividerView({ node, path, ctx }: ViewProps) {
+  const f = frameOf(node, path, ctx)
+  const v = getModifier(node, 'vertical')?.args[0]
+  const isV = !!(v && v.t === 'bool' && v.v)
+  const sw = numModifier(node, 'strokeWidth')
+  const thick = sw != null ? vp(sw) : 1
+  const col = resolveColor(getModifier(node, 'color')?.args[0], ctx.states) ?? '#E5E5E5'
+  return (
+    <div {...f.common} style={{
+      flexShrink: 0,
+      width: isV ? thick : '100%',
+      height: isV ? '100%' : thick,
+      alignSelf: isV ? 'stretch' : undefined,
+      backgroundColor: col,
+      ...f.style,
+    }}>
+      {f.indicator}
+      {f.handles}
+    </div>
+  )
+}
+
+/** Blank：弹性占位（撑满剩余空间；编辑器里给一个最小可点选尺寸） */
+export function BlankView({ node, path, ctx }: ViewProps) {
+  const f = frameOf(node, path, ctx)
+  return (
+    <div {...f.common} style={{ flexGrow: 1, flexShrink: 1, minWidth: 8, minHeight: 8, ...f.style }}>
+      {f.indicator}
+      {f.handles}
+    </div>
+  )
+}
+
+/** Rating({ rating, indicator })：五星展示，实心数 = round(rating) */
+export function RatingView({ node, path, ctx }: ViewProps) {
+  const f = frameOf(node, path, ctx)
+  const o = ctorObj(node)
+  const rating = resolveNum(o?.rating, ctx.states) ?? 0
+  const full = Math.max(0, Math.min(5, Math.round(rating)))
+  return (
+    <div {...f.common} style={{ display: 'inline-flex', gap: 2, ...f.style }}>
+      {[0, 1, 2, 3, 4].map(i => (
+        <span key={i} style={{ color: i < full ? '#FFA000' : '#E5E5E5', fontSize: '1.5em', lineHeight: 1 }}>★</span>
+      ))}
       {f.indicator}
       {f.handles}
     </div>

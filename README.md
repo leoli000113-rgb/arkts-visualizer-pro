@@ -5,7 +5,7 @@
 ## 功能
 
 - 导入 `.ets` 文件 → 可视化预览 → 拖拽编辑 → 导出代码
-- 支持 25+ ArkUI 组件（Text/Button/Image/Row/Column/Stack/Grid/List/Tabs/TextInput/Toggle/Slider 等）
+- 支持 30+ ArkUI 组件（Text/Button/Image/Row/Column/Stack/Grid/List/Tabs/TextInput/Toggle/Slider/Badge/Rating/Divider/Blank 等）
 - 三大面板：基础组件 / 复合组件库 / 页面模板（模板带即时缩图预览）
 - 28 个页面模板，分 7 大类（基础/首页/列表/表单/网格/个人中心/卡片）
 - 9 个复合组件（卡片/列表项/搜索栏/用户头部/按钮组等）

@@ -207,6 +207,34 @@ export const SPECS: ComponentSpec[] = [
       modifiers: [mod('width', [str('100%')]), mod('height', [num(120)])],
     }),
   },
+  {
+    type: 'Divider', category: '基础', palette: true, container: false,
+    makeDefault: () => ({ type: 'Divider', ctorArgs: [], children: [], modifiers: [mod('width', [str('100%')])] }),
+  },
+  {
+    type: 'Blank', category: '布局', palette: true, container: false,
+    makeDefault: () => ({ type: 'Blank', ctorArgs: [], children: [], modifiers: [] }),
+  },
+  {
+    type: 'Badge', category: '容器', palette: true, container: true, singleChild: true,
+    makeDefault: () => ({
+      type: 'Badge', ctorArgs: [obj({ count: num(1) })],
+      children: [text('消息')], modifiers: [],
+    }),
+    fields: [
+      { kind: 'ctorObjNum', label: 'count', key: 'count', tip: '角标数字（0 = 不显示）' },
+    ],
+  },
+  {
+    type: 'Rating', category: '反馈', palette: true, container: false,
+    makeDefault: () => ({
+      type: 'Rating', ctorArgs: [obj({ rating: num(3), indicator: bool(false) })], children: [],
+      modifiers: [],
+    }),
+    fields: [
+      { kind: 'ctorObjNum', label: 'rating', key: 'rating', tip: '当前评分（0–5）' },
+    ],
+  },
 
   // —— 表单 ——
   {

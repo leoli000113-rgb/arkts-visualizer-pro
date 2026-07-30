@@ -20,7 +20,8 @@ import { ArgVal, IRFile, IRMember, IRNode, IRState } from '../ir/types'
  */
 
 // 表达式继续符：primary 之后遇到这些符号，说明是复合表达式，整体按 raw 保留
-const TAIL_OPS = new Set(['+', '-', '*', '/', '%', '?', ':', '&&', '||', '??', '==', '===', '!=', '!==', '<', '>', '<=', '>=', '='])
+// （[ 为下标访问 arr[i].x；= 覆盖赋值/==/===）
+const TAIL_OPS = new Set(['+', '-', '*', '/', '%', '?', ':', '&&', '||', '??', '==', '===', '!=', '!==', '<', '>', '<=', '>=', '=', '['])
 /** 结构性节点（不参与根组件判定） */
 const NON_STRUCTURAL = new Set(['Comment', 'Expr'])
 
@@ -77,7 +78,7 @@ export class Parser {
     return this.rawSlice(start, this.p)
   }
 
-  /** 从 start 捕获到表达式结束（深度 0 的 , ) ] } 之前），返回重建文本 */
+  /** 从 start 捕获到表达式结束（深度 0 的 , ) ] } ; 之前），返回重建文本 */
   private captureExprRaw(start: number): string {
     let depth = 0
     while (this.peek().kind !== 'eof') {
@@ -88,6 +89,7 @@ export class Parser {
           if (depth === 0) break
           depth--
         } else if (t.text === ',' && depth === 0) break
+        else if (t.text === ';' && depth === 0) break
       }
       this.next()
     }
@@ -115,13 +117,24 @@ export class Parser {
   // ---------- 文件级 ----------
 
   parseFile(): IRFile {
-    // 前言：跳过 import/interface 等，原文保留（含注释与格式）
-    while (!this.at('@') && !this.atId('struct') && this.peek().kind !== 'eof') this.next()
-    const preamble = this.src.slice(0, this.peek().pos)
+    // 前言：跳过 import/interface/全局装饰函数（@Styles/@Extend/@Concurrent function 等），原文保留
+    let decStart = -1
+    for (;;) {
+      while (!this.at('@') && !this.atId('struct') && this.peek().kind !== 'eof') this.next()
+      if (this.peek().kind === 'eof') break
+      if (this.atId('struct')) { decStart = this.peek().pos; break }
+      // at('@')：尝试消费装饰器序列；后面不是 struct（如 @Styles function）则并入前言继续
+      const mark = this.p
+      const dStart = this.peek().pos
+      while (this.at('@')) { this.next(); this.expectId(); if (this.at('(')) this.captureBalanced('(', ')') }
+      if (this.atId('struct')) { decStart = dStart; break }
+      this.p = mark
+      this.next()
+    }
+    const preambleEnd = decStart >= 0 ? decStart : this.peek().pos
+    const preamble = this.src.slice(0, preambleEnd)
     // struct 装饰器原文
-    const decStart = this.peek().pos
-    while (this.at('@')) { this.next(); this.expectId(); if (this.at('(')) this.captureBalanced('(', ')') }
-    const structDecorators = this.src.slice(decStart, this.peek().pos).trim()
+    const structDecorators = decStart >= 0 ? this.src.slice(decStart, this.peek().pos).trim() : ''
     this.expectId('struct')
     const structName = this.expectId()
     this.eat('{')
@@ -422,8 +435,11 @@ export class Parser {
         return { t: 'raw', v: this.rawSlice(start, this.p) }
       }
       if (t.text === '{') return this.parseObj()
-      // 一元表达式（-1 / !x 等）：整体 raw
-      return { t: 'raw', v: this.captureExprRaw(start) }
+      // 一元表达式（-1 / !x 等）：一元符 + primary；后接运算符/下标则整体 raw
+      this.next() // 一元符
+      this.parseArgVal() // 消费操作数 primary（含属性/下标/调用/尾部运算符）
+      if (this.atTailOp()) return { t: 'raw', v: this.captureExprRaw(start) }
+      return { t: 'raw', v: this.rawSlice(start, this.p) }
     }
     if (t.kind === 'str') { this.next(); return this.finishPrimary(start, { t: 'str', v: t.text }) }
     if (t.kind === 'hex') { this.next(); return this.finishPrimary(start, { t: 'hex', v: parseInt(t.text.slice(2), 16) }) }
@@ -435,6 +451,12 @@ export class Parser {
       // 函数调用（$r('app.media.x') / 任意 fn(...)）：连同调用与可能的尾部整体 raw
       if (this.at('(')) {
         this.captureBalanced('(', ')')
+        // 方法链：fn().m1().m2(...)（如 PanGesture().onActionStart(...)）整体按 raw 保留
+        while (this.at('.')) {
+          this.next()
+          if (this.peek().kind === 'id') this.next()
+          if (this.at('(')) this.captureBalanced('(', ')')
+        }
         if (this.at('=>')) { this.next(); if (this.at('{')) this.captureBalanced('{', '}'); else this.captureExprRaw(this.p) }
         if (this.atTailOp()) return { t: 'raw', v: this.captureExprRaw(start) }
         return { t: 'raw', v: this.rawSlice(start, this.p) }
@@ -519,4 +541,23 @@ export class Parser {
 
 export function parse(src: string): IRFile {
   return new Parser(src).parseFile()
+}
+
+/**
+ * 解析修饰符链文本（@Styles/@Extend 方法体）：'.width(100).height(50)' → Modifier[]。
+ * 整段必须被消费（注释可残留），否则返回 null。
+ */
+export function parseModifierChainText(text: string): IRNode['modifiers'] | null {
+  try {
+    const p = new Parser(text)
+    const node: IRNode = { type: '_styles_', ctorArgs: [], children: [], modifiers: [] }
+    ;(p as unknown as { parseModifierChain(n: IRNode): void }).parseModifierChain(node)
+    const rest = (p as unknown as { toks: Tok[]; p: number })
+    for (let i = rest.p; i < rest.toks.length; i++) {
+      if (rest.toks[i].kind !== 'comment' && rest.toks[i].kind !== 'eof') return null
+    }
+    return node.modifiers
+  } catch {
+    return null
+  }
 }

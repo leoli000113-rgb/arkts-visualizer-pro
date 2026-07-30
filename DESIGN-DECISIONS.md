@@ -375,3 +375,25 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - **交互抛光**：大纲树容器收合（▸/▾）、拖拽跟手标签（ghost）、Stack 对齐吸附（±3vp 吸附兄弟/容器边缘中线，绘制玫红参考线，Alt 偏移与 Stack 落点都生效）、模板即时缩图（renderer 直接渲染模板 IR 缩略预览，GrapesJS 式 block card）、快捷键说明弹窗（顶栏 ?）。
 - **工具链**：补 ESLint 9 flat config（typescript-eslint + react-hooks），存量告警清零（DeviceEditor 改 render 期调整状态模式、CodePane 去掉 render 期写 ref）。
 - 回归锚点：`registry/registry.test.ts` 8 项（SUPPORTED 全覆盖/面板分组顺序/palette 默认节点往返幂等/约束派生一致）。测试 89/89 绿，typecheck/build/eslint 全绿。
+
+## 18. 稳定性加固 + 保真度跃升（2026-07-28）
+
+针对「拖布局组件概率蓝屏」与「含逻辑的真实 .ets 在网页上不像手机」两个反馈：
+
+- **「蓝屏」根因与修复**：dnd/resize 手势只监听 pointermove/pointerup——在浏览器窗口外松开时 pointerup 永不触发，拖拽态与大号蓝色 .drop-inside 覆盖层卡死。修复：pointercancel + window blur 一律收尾，拖拽中 Esc 可取消；resize 同样加固。另加 **ErrorBoundary**：任何渲染异常显示错误面板（信息+重置示例）而非白屏。
+- **表达式小求值器 evalExpr**（renderer/shared，禁 eval、求不出回退原文）：字面量/this.x/三元/比较/&& ||/!/加法拼接。styleOf 与 resolveStr/Num/Bool 全部接入——属性里的三元、拼接终于能落地。
+- **ForEach 对象数组**：parseArrayLiteral 支持对象字面量项（容忍尾逗号——真实代码高频），模板内 item.member 访问与拼接替换。
+- **@Styles 展开**：struct 成员与全局 function 的 @Styles 提取成样式表（parser 新增 parseModifierChainText 公开入口）；0 参样式调用在 styleOf 就地展开、本机修饰符覆盖。**顺手修了 parser 真 bug**：全局 @Styles/@Extend/@Concurrent function 之前会让整个文件解析失败（现并入 preamble）。
+- **同文件自定义组件渲染**：postamble 的 @Component struct 解析成组件 IR 表；未收录类型按名渲染其 build()，调用点 obj 参数按名覆盖组件字段（含 raw 成员字面量字段提取为参数表）。实例只读、递归限深 3；wrapper alignSelf: stretch 保证内部 % 宽度对齐全局父容器语义。
+- **修饰符覆盖包**：shadow/linearGradient/border(obj)/rotate/scale/translate（transform 合成）/textOverflow/letterSpacing/lineHeight/fontStyle/fontFamily/clip/blur/backdropBlur/backgroundImage(Size)。
+- 回归锚点：fidelity2.test.tsx 14 项（求值器/对象数组/@Styles/自定义组件/修饰符包）。测试 103/103 绿，typecheck/lint/build 全绿；Playwright 真实风格文件（自定义组件+三元+对象 ForEach+@Styles）截图验证与真机观感一致。
+
+## 19. 保真度第二轮：求值器增强 / @Extend / @Builder 带参 / 新组件（2026-07-28）
+
+- **evalExpr 增强**：`?.`/`??`、成员访问链（.prop / ?.prop / [i]，含 .length）、加减乘除（左结合防负号误判）、null 字面量。中间值类型 EvalVal（ArgVal/对象/数组/null）仅在公开入口收敛为 ArgVal。修了两个真实 bug：?. 作为链起点不被尝试；`t:'obj'` 形态（@State object 初值被 parser 结构化为 obj 而非 raw）的成员访问不生效。
+- **If 条件折叠接入求值器**：`if (this.count > 0)` 这类条件现在能按 @State 初值正确折叠/展开。
+- **ForEach**：`(item, index)` 双参数替换；substRawText 通用替换（渲染期把 item.field/index 写成字面量文本再交求值器，序列化不受影响）。
+- **@Extend 展开**：`@Extend(Comp) name()` 组件专属样式，仅对声明类型展开，优先于全局 @Styles。
+- **@Builder 带参调用**：调用点参数可求值时按名替换进定义体只读渲染（ForEach 里 `this.mealRow(item.n)` 常见写法终于所见即所得）。
+- **新组件**：Divider / Blank / Badge（独子容器）/ Rating 注册进 registry + 渲染器，SUPPORTED 26 → 30。
+- 测试 114/114 绿，typecheck/lint/build 全绿；Playwright 进阶真实文件（@Extend+@Builder 带参+Badge+?.+index）截图验证。

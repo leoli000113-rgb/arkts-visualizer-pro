@@ -26,11 +26,12 @@ describe('registry 完整性', () => {
   })
 
   it('组件面板分组与既有顺序一致', () => {
-    expect(PALETTE_GROUPS.map(g => g.label)).toEqual(['布局', '容器', '基础', '表单'])
-    expect(PALETTE_GROUPS[0].items).toEqual(['Column', 'Row', 'Stack', 'RelativeContainer', 'Flex'])
-    expect(PALETTE_GROUPS[1].items).toEqual(['Scroll', 'List', 'Grid', 'Tabs', 'ListItem', 'GridItem', 'TabContent'])
-    expect(PALETTE_GROUPS[2].items).toEqual(['Text', 'Button', 'Image', 'Video'])
+    expect(PALETTE_GROUPS.map(g => g.label)).toEqual(['布局', '容器', '基础', '表单', '反馈'])
+    expect(PALETTE_GROUPS[0].items).toEqual(['Column', 'Row', 'Stack', 'RelativeContainer', 'Flex', 'Blank'])
+    expect(PALETTE_GROUPS[1].items).toEqual(['Scroll', 'List', 'Grid', 'Tabs', 'ListItem', 'GridItem', 'TabContent', 'Badge'])
+    expect(PALETTE_GROUPS[2].items).toEqual(['Text', 'Button', 'Image', 'Video', 'Divider'])
     expect(PALETTE_GROUPS[3].items).toEqual(['TextInput', 'Toggle', 'Slider', 'Checkbox', 'Radio', 'Progress'])
+    expect(PALETTE_GROUPS[4].items).toEqual(['Rating'])
   })
 
   it('每个 palette 元件都有 makeDefault', () => {

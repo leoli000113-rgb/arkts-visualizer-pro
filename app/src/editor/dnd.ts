@@ -123,11 +123,27 @@ function attach() {
   bound = true
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
+  // 窗外松开/系统取消/窗口失焦时兜底收尾，避免拖拽态与落点指示卡死（「蓝屏」根因）
+  window.addEventListener('pointercancel', onCancel)
+  window.addEventListener('blur', onCancel)
+  window.addEventListener('keydown', onEsc)
 }
 function detach() {
   bound = false
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
+  window.removeEventListener('pointercancel', onCancel)
+  window.removeEventListener('blur', onCancel)
+  window.removeEventListener('keydown', onEsc)
+}
+
+/** 取消当前手势：不落下、清 ghost/参考线/落点（Esc/失焦/pointercancel 共用） */
+function onCancel() {
+  if (!ctx) return
+  endDrag()
+}
+function onEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape') onCancel()
 }
 
 export function startNewDrag(type: string) {

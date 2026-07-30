@@ -9,6 +9,7 @@ import { SidePanel } from './panels/SidePanel'
 import { ZoomBar } from './panels/ZoomBar'
 import { CodePane } from './panels/CodePane'
 import { HelpModal } from './panels/HelpModal'
+import { ErrorBoundary } from './editor/ErrorBoundary'
 import './App.css'
 
 function useEditorShortcuts() {
@@ -70,26 +71,28 @@ export default function App() {
   return (
     <div className="app">
       <TopBar onOpenHelp={() => setHelpOpen(true)} />
-      <div className="content">
-        <SidePanel />
-        <div className="canvas-pane" ref={paneRef}>
-          <ZoomBar paneRef={paneRef} w_css={vp.w_css} h_css={vp.h_css} />
-          <div className="zoom-stage" style={{ width: (vp.w_css + 20) * zoom, height: (vp.h_css + 20) * zoom }}>
-            <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
-              <div className="phone-screen" style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => setSelected(null)}>
-                {ir ? renderNode(ir.root, [], selectedPath, setSelected, dropTarget) : <div style={{ padding: 16, color: '#888' }}>{error ? '解析失败，见右侧代码窗' : '正在解析…'}</div>}
+      <ErrorBoundary>
+        <div className="content">
+          <SidePanel />
+          <div className="canvas-pane" ref={paneRef}>
+            <ZoomBar paneRef={paneRef} w_css={vp.w_css} h_css={vp.h_css} />
+            <div className="zoom-stage" style={{ width: (vp.w_css + 20) * zoom, height: (vp.h_css + 20) * zoom }}>
+              <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
+                <div className="phone-screen" style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => setSelected(null)}>
+                  {ir ? renderNode(ir.root, [], selectedPath, setSelected, dropTarget) : <div style={{ padding: 16, color: '#888' }}>{error ? '解析失败，见右侧代码窗' : '正在解析…'}</div>}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-        <div className="right-col">
-          <div className="prop-panel">
-            <div className="label">属性</div>
-            <PropertyPanel />
+          <div className="right-col">
+            <div className="prop-panel">
+              <div className="label">属性</div>
+              <PropertyPanel />
+            </div>
+            <CodePane />
           </div>
-          <CodePane />
         </div>
-      </div>
+      </ErrorBoundary>
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       <ContextMenu />
     </div>

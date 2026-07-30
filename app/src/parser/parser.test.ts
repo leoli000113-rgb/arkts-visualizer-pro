@@ -149,3 +149,62 @@ struct T {
     expect(s).toContain('解析失败')
   })
 })
+
+// 回归：NovelReader 真实页面暴露的三类解析失败（详见 git 提交说明）
+describe('NovelReader 回归用例', () => {
+  it('@State 负数字面量初始化（-1）不再吞掉后续成员/build', () => {
+    const src = `@Entry
+@Component
+struct T {
+  @State n: number = -1
+  @State s: string = ''
+  build() {
+    Column() { Text(\`\${this.n}\`) }
+  }
+}
+`
+    const { ir1, s1, s2 } = roundTripTwice(src)
+    expect(ir1.root.type).toBe('Column')
+    expect(ir1.states.length).toBe(2)
+    expect((ir1.states[0].init as any).v).toBe('-1')
+    expect(s2).toBe(s1) // 往返幂等
+  })
+
+  it('修饰符参数中的方法链 PanGesture().onActionStart(...).onActionEnd(...)', () => {
+    const src = `@Entry
+@Component
+struct T {
+  @State v: boolean = false
+  build() {
+    Stack() {
+      Button('x')
+        .gesture(PanGesture().onActionStart(() => {}).onActionEnd(() => {}))
+    }
+  }
+}
+`
+    const { ir1, s1, s2 } = roundTripTwice(src)
+    expect(ir1.root.type).toBe('Stack')
+    expect(s1).toContain('PanGesture().onActionStart(() => {}).onActionEnd(() => {})')
+    expect(s2).toBe(s1)
+  })
+
+  it('对象参数中的下标访问 this.pages[this.pageIdx].lines', () => {
+    const src = `@Entry
+@Component
+struct T {
+  @State pages: string[] = []
+  @State pageIdx: number = 0
+  build() {
+    Column() {
+      PageView({ lines: this.pages[this.pageIdx].lines, fontSize: 14 })
+    }
+  }
+}
+`
+    const { ir1, s1, s2 } = roundTripTwice(src)
+    expect(ir1.root.type).toBe('Column')
+    expect(s1).toContain('this.pages[this.pageIdx].lines')
+    expect(s2).toBe(s1)
+  })
+})

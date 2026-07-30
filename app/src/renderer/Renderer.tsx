@@ -6,28 +6,32 @@ import { useStore } from '../store/store'
 import { RelativeContainerEngine } from './RelativeContainer'
 import {
   RenderCtx, RenderEnv, ViewProps,
-  ctorObj, firstStr, num, vp, keyOf, frameOf, stackAlign, visibleChildren,
+  ctorObj, firstStr, firstStrE, num, vp, keyOf, frameOf, stackAlign, visibleChildren,
+  splitTop, evalExpr, ForEachItem,
 } from './shared'
+import { ArgVal } from '../ir/types'
 import {
   FlexView, ScrollView, ListView, ListItemView,
   GridView, GridItemView, TabsView, TabContentView,
 } from './containers'
 import { TextInputView, ToggleView, SliderView, CheckboxView, RadioView } from './forms'
-import { ProgressView, VideoView } from './feedback'
-import { IfView, ElseView, ForEachView } from './flow'
+import { ProgressView, VideoView, DividerView, BlankView, RatingView } from './feedback'
+import { BadgeView } from './containers'
+import { IfView, ElseView, ForEachView, substTemplate } from './flow'
+import { instanceStates } from './components'
 import './renderer.css'
 
 export const SUPPORTED = new Set([
   // 布局/层叠/相对
   'Column', 'Row', 'Stack', 'RelativeContainer',
-  // 弹性/滚动/列表/网格/标签页
-  'Flex', 'Scroll', 'List', 'ListItem', 'Grid', 'GridItem', 'Tabs', 'TabContent',
+  // 弹性/滚动/列表/网格/标签页/角标
+  'Flex', 'Scroll', 'List', 'ListItem', 'Grid', 'GridItem', 'Tabs', 'TabContent', 'Badge',
   // 基础
-  'Text', 'Button', 'Image', 'Video',
+  'Text', 'Button', 'Image', 'Video', 'Divider', 'Blank',
   // 表单
   'TextInput', 'Toggle', 'Slider', 'Checkbox', 'Radio',
   // 反馈
-  'Progress',
+  'Progress', 'Rating',
   // 结构/流程
   'If', 'Else', 'ForEach',
   // Builder 调用点镜像
@@ -45,13 +49,23 @@ export function renderNode(
 ): React.ReactNode {
   const states: IRState[] = env?.states ?? useStore.getState().ir?.states ?? []
   const aids = env?.aids ?? useStore.getState().showAids
-  const childEnv: RenderEnv = { states, aids }
+  const styles = env?.styles ?? useStore.getState().stylesTable.styles ?? {}
+  const extendsTable = env?.extends ?? useStore.getState().stylesTable.extends ?? {}
+  const components = env?.components ?? useStore.getState().components ?? {}
+  const builders = env?.builders ?? useStore.getState().builders ?? {}
+  const depth = env?.depth ?? 0
+  const childEnv: RenderEnv = { states, aids, styles, extends: extendsTable, components, builders, depth }
   const ctx: RenderCtx = {
     selectedPath,
     onSelect,
     dropTarget,
     states,
     aids,
+    styles,
+    extends: extendsTable,
+    components,
+    builders,
+    depth,
     render: (c, p, nm) => renderNode(c, p, selectedPath, onSelect, dropTarget, nm ?? false, childEnv),
     renderChildren: (n, p) => visibleChildren(n.children, states).map(
       ({ c, i }) => renderNode(c, [...p, i], selectedPath, onSelect, dropTarget, false, childEnv),
@@ -63,10 +77,43 @@ export function renderNode(
   // 注释节点：不渲染（仅占路径下标）
   if (node.type === 'Comment') return null
 
-  // 表达式语句（this.xxx() 等）：仅辅助标记开启时显示小徽标
+  // 表达式语句（this.xxx() 等）：@Builder 带参调用先做只读替换渲染；其余仅辅助标记开启时显示小徽标
   if (node.type === 'Expr') {
-    if (!ctx.aids) return null
     const raw = node.ctorArgs[0]
+    const rawText = raw && raw.t === 'raw' ? raw.v : ''
+    const bm = rawText.match(/^\s*this\.(\w+)\s*\(([\s\S]*?)\)\s*;?\s*$/)
+    if (bm) {
+      const def = builders[bm[1]]
+      if (def) {
+        const argRaws = splitTop(bm[2], ',').map(x => x.trim()).filter(x => x !== '')
+        const vals = argRaws.map(a => evalExpr(a, states))
+        if (argRaws.length > 0 && vals.every((v): v is ArgVal => !!v)) {
+          // 参数按名替换进 @Builder 定义体（只读：pointer-events 穿透，编辑请走定义处）
+          let children = def.children
+          def.params.forEach((p, i) => {
+            const v = vals[i]
+            const item: ForEachItem | undefined =
+              v.t === 'str' || v.t === 'num' ? v.v : v.t === 'obj' ? v.v : undefined
+            if (item !== undefined) children = children.map(c => substTemplate(c, p, item))
+          })
+          return (
+            <div key={k} {...f.common} className={ctx.aids ? 'ir-buildercall' : undefined} style={f.style}>
+              {ctx.aids && (
+                <div className="ir-buildercall-label">ƒ {rawText.replace(/;$/, '')}</div>
+              )}
+              <div style={{ pointerEvents: 'none', display: 'contents' }}>
+                {children.map((c, i) =>
+                  renderNode(c, [...path, i], null, () => {}, null, false,
+                    { states, aids, styles, extends: extendsTable, components, builders, depth }))}
+              </div>
+              {f.indicator}
+              {f.handles}
+            </div>
+          )
+        }
+      }
+    }
+    if (!ctx.aids) return null
     return (
       <div key={k} {...f.common} className="ir-expr" title={raw && raw.t === 'raw' ? raw.v : ''}>
         ƒ {raw && raw.t === 'raw' ? raw.v : node.type}
@@ -99,6 +146,26 @@ export function renderNode(
           background: '#fff7e0', padding: '2px 6px', fontSize: 10, borderRadius: 4,
         }}>
           ⚠️ 解析失败片段（已原文保留）
+          {f.indicator}
+          {f.handles}
+        </div>
+      )
+    }
+    // 同文件自定义组件：按名解析并渲染其 build()，调用点参数按名覆盖；实例内部只读
+    const comp = components[node.type]
+    if (comp && depth < 3) {
+      const instEnv: RenderEnv = {
+        states: instanceStates(comp, ctorObj(node)),
+        aids,
+        styles,
+        components,
+        depth: depth + 1,
+      }
+      return (
+        <div key={k} {...f.common} className="ir-instance" style={{ display: 'flex', flexDirection: 'column', alignSelf: 'stretch', ...f.style }}>
+          <div style={{ pointerEvents: 'none', display: 'contents' }}>
+            {renderNode(comp.root, [], null, () => {}, null, false, instEnv)}
+          </div>
           {f.indicator}
           {f.handles}
         </div>
@@ -177,7 +244,7 @@ export function renderNode(
     case 'Text':
       return (
         <div key={k} {...f.common} style={{ display: 'inline-block', ...f.style }}>
-          {firstStr(node) ?? ''}
+          {firstStrE(node, states) ?? ''}
           {f.indicator}
           {f.handles}
         </div>
@@ -192,7 +259,7 @@ export function renderNode(
           backgroundColor: '#0A59F7', color: '#FFFFFF',
           cursor: 'default', ...f.style,
         }}>
-          {firstStr(node) ?? ''}
+          {firstStrE(node, states) ?? ''}
           {f.indicator}
           {f.handles}
         </button>
@@ -233,6 +300,10 @@ export function renderNode(
     // —— 反馈组件组 ——
     case 'Progress': return <ProgressView key={k} {...view} />
     case 'Video': return <VideoView key={k} {...view} />
+    case 'Divider': return <DividerView key={k} {...view} />
+    case 'Blank': return <BlankView key={k} {...view} />
+    case 'Rating': return <RatingView key={k} {...view} />
+    case 'Badge': return <BadgeView key={k} {...view} />
 
     // —— 结构/流程 ——
     case 'If': return <IfView key={k} {...view} />

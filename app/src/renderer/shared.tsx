@@ -1,5 +1,5 @@
 import React, { CSSProperties } from 'react'
-import { ArgVal, IRNode, IRState } from '../ir/types'
+import { ArgVal, IRFile, IRNode, IRState, Modifier } from '../ir/types'
 import { numModifier, Path } from '../ir/mutate'
 import { startResize } from './resize'
 import { DropTarget, beginMaybeMove } from '../editor/dnd'
@@ -140,47 +140,95 @@ export function stackAlign(a: ArgVal | undefined): Pick<CSSProperties, 'justifyC
   return { justifyContent, alignItems }
 }
 
-export function styleOf(node: IRNode, noMargin = false): CSSProperties {
+export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], styles: Record<string, Modifier[]> = {}, extendsTable: Record<string, Record<string, Modifier[]>> = {}): CSSProperties {
   const s: CSSProperties = {}
-  for (const m of node.modifiers) {
+  const tf: string[] = [] // transform 合成（offset/translate/rotate/scale 共存）
+  // @Styles/@Extend 展开：0 参数且命中样式表的修饰符调用，就地展开为其修饰符链
+  // （@Extend 组件专属样式优先于全局 @Styles；本机后续修饰符自然覆盖）
+  let modifiers = node.modifiers
+  const styleOfType = extendsTable[node.type]
+  if (Object.keys(styles).length || styleOfType) {
+    modifiers = []
+    for (const m of node.modifiers) {
+      const chain = m.args.length === 0 ? (styleOfType?.[m.name] ?? styles[m.name]) : undefined
+      if (chain) modifiers.push(...chain)
+      else modifiers.push(m)
+    }
+  }
+  // 求值感知版取值：raw 表达式经 evalExpr 小求值后再映射（求不出回退 undefined）
+  const numE = (a: ArgVal | undefined): number | undefined => {
+    if (!a) return undefined
+    if (a.t === 'raw') { const v = evalExpr(a.v, states); return v && v.t === 'num' ? v.v : undefined }
+    return num(a)
+  }
+  const lenE = (a: ArgVal | undefined): string | number | undefined => {
+    if (!a) return undefined
+    if (a.t === 'raw') { const v = evalExpr(a.v, states); return v ? len(v) : undefined }
+    return len(a)
+  }
+  const colorE = (a: ArgVal | undefined): string | undefined => {
+    if (!a) return undefined
+    if (a.t === 'raw') { const v = evalExpr(a.v, states); return v ? color(v) : undefined }
+    return color(a)
+  }
+  let hasMaxLines = false
+  for (const m of modifiers) {
     const a0 = m.args[0]
     switch (m.name) {
-      case 'width': s.width = len(a0); break
-      case 'height': s.height = len(a0); break
+      case 'width': s.width = lenE(a0); break
+      case 'height': s.height = lenE(a0); break
       case 'padding': s.padding = box(a0); break
       case 'margin': if (!noMargin) s.margin = box(a0); break
-      case 'backgroundColor': s.backgroundColor = color(a0); break
-      case 'fontSize': if (num(a0) != null) s.fontSize = vp(num(a0)!); break
-      case 'fontColor': s.color = color(a0); break
-      case 'borderRadius': if (num(a0) != null) s.borderRadius = vp(num(a0)!); break
+      case 'backgroundColor': s.backgroundColor = colorE(a0); break
+      case 'fontSize': if (numE(a0) != null) s.fontSize = vp(numE(a0)!); break
+      case 'fontColor': s.color = colorE(a0); break
+      case 'borderRadius': if (numE(a0) != null) s.borderRadius = vp(numE(a0)!); break
       case 'justifyContent': s.justifyContent = flexJustify(a0); break
       case 'alignItems': s.alignItems = alignItems(a0); break
       case 'objectFit':
         if (a0 && a0.t === 'enum') s.objectFit = a0.v.replace('ImageFit.', '').toLowerCase() as CSSProperties['objectFit']; break
       case 'fontWeight': { const w = fontWeight(a0); if (w != null) s.fontWeight = w; break }
+      case 'fontStyle': if (a0 && a0.t === 'enum' && a0.v === 'FontStyle.Italic') s.fontStyle = 'italic'; break
+      case 'fontFamily': if (a0 && a0.t === 'str') s.fontFamily = a0.v; break
+      case 'letterSpacing': if (numE(a0) != null) s.letterSpacing = vp(numE(a0)!); break
+      case 'lineHeight': if (numE(a0) != null) s.lineHeight = vp(numE(a0)!); break
       case 'textAlign': { const t = textAlign(a0); if (t) s.textAlign = t; break }
       case 'maxLines':
-        if (num(a0) != null && num(a0)! > 0) {
-          (s as any).display = '-webkit-box'
+        if (numE(a0) != null && numE(a0)! > 0) {
+          hasMaxLines = true
+          ;(s as any).display = '-webkit-box'
           ;(s as any).WebkitBoxOrient = 'vertical'
-          s.WebkitLineClamp = num(a0)
+          s.WebkitLineClamp = numE(a0)
           s.overflow = 'hidden'
         }
         break
+      case 'textOverflow':
+        if (a0 && a0.t === 'enum' && a0.v.includes('Ellipsis')) s.textOverflow = 'ellipsis'
+        break
       case 'layoutWeight':
-        if (num(a0) != null) {
-          s.flexGrow = num(a0)!
+        if (numE(a0) != null) {
+          s.flexGrow = numE(a0)!
           s.flexShrink = 1
           s.flexBasis = 0
           s.minWidth = 0
           s.minHeight = 0
         }
         break
-      case 'opacity': if (num(a0) != null) s.opacity = num(a0)!; break
+      case 'opacity': if (numE(a0) != null) s.opacity = numE(a0)!; break
       case 'borderWidth':
-        if (num(a0) != null) { s.borderWidth = vp(num(a0)!); s.borderStyle = 'solid' }
+        if (numE(a0) != null) { s.borderWidth = vp(numE(a0)!); s.borderStyle = 'solid' }
         break
-      case 'borderColor': { const c = color(a0); if (c) { s.borderColor = c; s.borderStyle = 'solid' } break }
+      case 'borderColor': { const c = colorE(a0); if (c) { s.borderColor = c; s.borderStyle = 'solid' } break }
+      case 'border':
+        // .border({ width, color, radius, style })（逐边写法暂不展开）
+        if (a0 && a0.t === 'obj') {
+          const o = a0.v
+          if (numE(o.width) != null) { s.borderWidth = vp(numE(o.width)!); s.borderStyle = 'solid' }
+          const c = colorE(o.color); if (c) { s.borderColor = c; s.borderStyle = 'solid' }
+          if (numE(o.radius) != null) s.borderRadius = vp(numE(o.radius)!)
+          if (o.style && o.style.t === 'enum') s.borderStyle = o.style.v.replace('BorderStyle.', '').toLowerCase()
+        }
+        break
       // —— 通用布局/定位属性 ——
       case 'position': {
         // 绝对定位（相对父级）：.position({ x, y })
@@ -195,10 +243,37 @@ export function styleOf(node: IRNode, noMargin = false): CSSProperties {
         // 相对自身布局位置的偏移：.offset({ x, y })
         const x = a0 && a0.t === 'obj' ? num(a0.v.x) : undefined
         const y = a0 && a0.t === 'obj' ? num(a0.v.y) : undefined
-        s.transform = `translate(${vp(x ?? 0)}px, ${vp(y ?? 0)}px)`
+        tf.push(`translate(${vp(x ?? 0)}px, ${vp(y ?? 0)}px)`)
         break
       }
-      case 'zIndex': if (num(a0) != null) s.zIndex = num(a0)!; break
+      case 'translate': {
+        const x = a0 && a0.t === 'obj' ? num(a0.v.x) : undefined
+        const y = a0 && a0.t === 'obj' ? num(a0.v.y) : undefined
+        tf.push(`translate(${vp(x ?? 0)}px, ${vp(y ?? 0)}px)`)
+        break
+      }
+      case 'rotate': {
+        // .rotate({ x, y, z, angle }) → rotate3d；仅 angle → rotate
+        if (a0 && a0.t === 'obj') {
+          const ang = num(a0.v.angle)
+          if (ang != null) {
+            const rx = num(a0.v.x) ?? 0
+            const ry = num(a0.v.y) ?? 0
+            const rz = num(a0.v.z) ?? 0
+            tf.push(rx || ry || rz ? `rotate3d(${rx}, ${ry}, ${rz || 1}, ${ang}deg)` : `rotate(${ang}deg)`)
+          }
+        }
+        break
+      }
+      case 'scale': {
+        if (a0 && a0.t === 'obj') {
+          const sx = num(a0.v.x)
+          const sy = num(a0.v.y)
+          if (sx != null || sy != null) tf.push(`scale(${sx ?? 1}, ${sy ?? sx ?? 1})`)
+        }
+        break
+      }
+      case 'zIndex': if (numE(a0) != null) s.zIndex = numE(a0)!; break
       case 'alignSelf': { const v = itemAlign(a0); if (v) s.alignSelf = v; break }
       case 'visibility':
         if (a0 && a0.t === 'enum') {
@@ -206,25 +281,83 @@ export function styleOf(node: IRNode, noMargin = false): CSSProperties {
           else if (a0.v === 'Visibility.None') s.display = 'none'
         }
         break
-      case 'aspectRatio': if (num(a0) != null) s.aspectRatio = String(num(a0)!); break
+      case 'aspectRatio': if (numE(a0) != null) s.aspectRatio = String(numE(a0)!); break
       case 'constraintSize':
         if (a0 && a0.t === 'obj') {
           const o = a0.v
-          if (num(o.minWidth) != null) s.minWidth = vp(num(o.minWidth)!)
-          if (num(o.maxWidth) != null) s.maxWidth = vp(num(o.maxWidth)!)
-          if (num(o.minHeight) != null) s.minHeight = vp(num(o.minHeight)!)
-          if (num(o.maxHeight) != null) s.maxHeight = vp(num(o.maxHeight)!)
+          if (numE(o.minWidth) != null) s.minWidth = vp(numE(o.minWidth)!)
+          if (numE(o.maxWidth) != null) s.maxWidth = vp(numE(o.maxWidth)!)
+          if (numE(o.minHeight) != null) s.minHeight = vp(numE(o.minHeight)!)
+          if (numE(o.maxHeight) != null) s.maxHeight = vp(numE(o.maxHeight)!)
         }
         break
       case 'size':
         if (a0 && a0.t === 'obj') {
-          if (num(a0.v.width) != null) s.width = vp(num(a0.v.width)!)
-          if (num(a0.v.height) != null) s.height = vp(num(a0.v.height)!)
+          if (numE(a0.v.width) != null) s.width = vp(numE(a0.v.width)!)
+          if (numE(a0.v.height) != null) s.height = vp(numE(a0.v.height)!)
         }
         break
-      case 'flexGrow': if (num(a0) != null) s.flexGrow = num(a0)!; break
-      case 'flexShrink': if (num(a0) != null) s.flexShrink = num(a0)!; break
-      case 'flexBasis': if (num(a0) != null) s.flexBasis = vp(num(a0)!); break
+      case 'flexGrow': if (numE(a0) != null) s.flexGrow = numE(a0)!; break
+      case 'flexShrink': if (numE(a0) != null) s.flexShrink = numE(a0)!; break
+      case 'flexBasis': if (numE(a0) != null) s.flexBasis = vp(numE(a0)!); break
+      case 'clip': if (a0 && a0.t === 'bool' && a0.v) s.overflow = 'hidden'; break
+      case 'blur': if (numE(a0) != null) s.filter = `blur(${vp(numE(a0)!)}px)`; break
+      case 'backdropBlur': if (numE(a0) != null) s.backdropFilter = `blur(${vp(numE(a0)!)}px)`; break
+      case 'shadow': {
+        // .shadow({ radius, color, offsetX, offsetY })
+        if (a0 && a0.t === 'obj') {
+          const o = a0.v
+          const r = num(o.radius) ?? 10
+          const ox = num(o.offsetX) ?? 0
+          const oy = num(o.offsetY) ?? 0
+          const c = colorE(o.color) ?? 'rgba(0,0,0,0.3)'
+          s.boxShadow = `${vp(ox)}px ${vp(oy)}px ${vp(r)}px ${c}`
+        }
+        break
+      }
+      case 'linearGradient': {
+        // .linearGradient({ angle, colors: [[色, 位置], ...] }) — 位置 0~1
+        if (a0 && a0.t === 'obj') {
+          const o = a0.v
+          const angle = num(o.angle) ?? 180
+          const raw = o.colors && o.colors.t === 'raw' ? o.colors.v : undefined
+          if (raw) {
+            const stops: string[] = []
+            const inner = raw.trim().replace(/^\[/, '').replace(/\]$/, '')
+            let ok = true
+            for (const t0 of splitTop(inner, ',')) {
+              const t = t0.trim()
+              if (!t.startsWith('[')) continue
+              const pair = t.replace(/^\[/, '').replace(/\]$/, '')
+              const ps = splitTop(pair, ',')
+              if (ps.length !== 2) { ok = false; break }
+              const cv = ps[0].trim()
+              const pos = parseFloat(ps[1])
+              let c: string | undefined
+              const sm = cv.match(/^'(.*)'$/) ?? cv.match(/^"(.*)"$/)
+              if (sm) c = sm[1]
+              else if (/^0x[0-9a-fA-F]+$/.test(cv)) c = color({ t: 'hex', v: parseInt(cv, 16) })
+              else if (/^[A-Za-z]+\.\w+$/.test(cv)) c = color({ t: 'enum', v: cv })
+              if (!c || !Number.isFinite(pos)) { ok = false; break }
+              stops.push(`${c} ${Math.round(pos * 100)}%`)
+            }
+            if (ok && stops.length >= 2) s.backgroundImage = `linear-gradient(${angle}deg, ${stops.join(', ')})`
+          }
+        }
+        break
+      }
+      case 'backgroundImage':
+        if (a0 && a0.t === 'str' && !a0.v.startsWith('$')) s.backgroundImage = `url(${a0.v})`
+        break
+      case 'backgroundImageSize':
+        if (a0 && a0.t === 'enum') {
+          const v = a0.v.replace('ImageSize.', '')
+          if (v === 'Cover' || v === 'Contain') s.backgroundSize = v.toLowerCase()
+          else if (v === 'Auto') s.backgroundSize = 'auto'
+        } else if (a0 && a0.t === 'obj') {
+          if (num(a0.v.width) != null) s.backgroundSize = `${vp(num(a0.v.width)!)}px`
+        }
+        break
       case 'enabled':
         // 禁用态：调暗呈现（编辑器仍需 pointer 事件以便选中，故不拦截事件）
         if (a0 && a0.t === 'bool' && !a0.v) s.opacity = 0.4
@@ -239,7 +372,20 @@ export function styleOf(node: IRNode, noMargin = false): CSSProperties {
       default: break
     }
   }
+  // 单行省略：未设 maxLines 时 textOverflow 需 nowrap
+  if (s.textOverflow === 'ellipsis' && !hasMaxLines) {
+    s.whiteSpace = 'nowrap'
+    s.overflow = 'hidden'
+  }
+  if (tf.length) s.transform = tf.join(' ')
   return s
+}
+
+/** 求值感知颜色解析：raw 表达式经 evalExpr 小求值后再映射 */
+export function resolveColor(a: ArgVal | undefined, states: IRState[]): string | undefined {
+  if (!a) return undefined
+  if (a.t === 'raw') { const v = evalExpr(a.v, states); return v ? color(v) : undefined }
+  return color(a)
 }
 
 export function ctorObj(node: IRNode): Record<string, ArgVal> | undefined {
@@ -249,6 +395,13 @@ export function ctorObj(node: IRNode): Record<string, ArgVal> | undefined {
 export function firstStr(node: IRNode): string | undefined {
   const a = node.ctorArgs[0]
   return a && a.t === 'str' ? a.v : undefined
+}
+/** 首构造参数的求值感知版：raw 表达式（三元/拼接/this.x）经小求值取字符串 */
+export function firstStrE(node: IRNode, states: IRState[]): string | undefined {
+  const a = node.ctorArgs[0]
+  if (!a) return undefined
+  if (a.t === 'str') return a.v
+  return resolveStr(a, states)
 }
 
 export function eqPath(a: Path | null, b: Path): boolean {
@@ -285,8 +438,18 @@ export function dropIndicator(pos: 'before' | 'after' | 'inside' | null): React.
 
 // ---------- 渲染上下文 ----------
 
-/** renderNode 的可选环境：显式传入 @State 表与辅助标记（SSR 测试等无 store 场景） */
-export interface RenderEnv { states?: IRState[]; aids?: boolean }
+/** renderNode 的可选环境：显式传入 @State 表、辅助标记、@Styles/@Extend 表与同文件组件表（SSR 测试等无 store 场景） */
+export interface RenderEnv {
+  states?: IRState[]
+  aids?: boolean
+  styles?: Record<string, Modifier[]>
+  extends?: Record<string, Record<string, Modifier[]>>
+  components?: Record<string, IRFile>
+  /** @Builder 定义表（带参调用点只读替换渲染用） */
+  builders?: Record<string, { params: string[]; children: IRNode[] }>
+  /** 自定义组件嵌套渲染深度（递归引用保护，>3 回退占位卡） */
+  depth?: number
+}
 
 export interface RenderCtx {
   selectedPath: Path | null
@@ -295,6 +458,15 @@ export interface RenderCtx {
   states: IRState[]
   /** 辅助标记：false 时隐藏 ƒ/if/ForEach 角标、折叠占位与 builder 标签（页面即所得） */
   aids: boolean
+  /** @Styles 定义表（styleOf 展开 0 参样式调用用） */
+  styles: Record<string, Modifier[]>
+  /** @Extend 定义表（组件类型 → 样式名 → 修饰符链） */
+  extends: Record<string, Record<string, Modifier[]>>
+  /** 同文件自定义组件表（未收录类型按名解析渲染） */
+  components: Record<string, IRFile>
+  /** @Builder 定义表 */
+  builders: Record<string, { params: string[]; children: IRNode[] }>
+  depth: number
   render: (c: IRNode, p: Path, noMargin?: boolean) => React.ReactNode
   /** 按 If/Else 配对规则渲染子节点序列（路径保持原始下标） */
   renderChildren: (n: IRNode, p: Path) => React.ReactNode[]
@@ -340,15 +512,421 @@ export function frameOf(node: IRNode, path: Path, ctx: RenderCtx, noMargin = fal
   if (sel) { selStyle.outline = '2px solid #3a6df0'; selStyle.outlineOffset = '-2px' }
   const handles = sel ? handlesFor(node, path) : []
   const indicator = dropIndicator(dropPos)
-  const style = { ...styleOf(node, noMargin), ...selStyle }
+  const style = { ...styleOf(node, noMargin, ctx.states, ctx.styles, ctx.extends), ...selStyle }
   return { sel, dropPos, common, handles, indicator, style }
 }
 
-// ---------- @State 轻量求值（禁 eval） ----------
+// ---------- 表达式与字面量小解析（禁 eval，求不出一律回退） ----------
 
 export function findState(states: IRState[], name: string): IRState | undefined {
   return states.find(s => s.name === name)
 }
+
+/** 按单字符分隔符做顶层拆分：忽略引号内与括号嵌套内的分隔符 */
+export function splitTop(s: string, sep: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let quote = ''
+  let cur = ''
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      cur += ch
+      if (ch === '\\' && i + 1 < s.length) { cur += s[++i]; continue }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue }
+    if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') depth--
+    if (ch === sep && depth === 0) { out.push(cur); cur = ''; continue }
+    cur += ch
+  }
+  out.push(cur)
+  return out
+}
+
+/** 在顶层查找运算符（引号/括号感知，ops 按先长后短传入），返回起始下标；未找到返回 -1 */
+export function findTopOp(s: string, ops: readonly string[]): number {
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      if (ch === '\\') { i++; continue }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') depth--
+    if (depth === 0) {
+      for (const op of ops) if (s.startsWith(op, i)) return i
+    }
+  }
+  return -1
+}
+
+/** 剥掉成对的外层括号（"(a ? b : c)" → "a ? b : c"） */
+function stripParens(s: string): string {
+  let t = s.trim()
+  while (t.startsWith('(') && t.endsWith(')')) {
+    let depth = 0
+    let wraps = true
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i]
+      if (ch === "'" || ch === '"') { i++; while (i < t.length && t[i] !== ch) { if (t[i] === '\\') i++; i++ } continue }
+      if (ch === '(') depth++
+      else if (ch === ')') {
+        depth--
+        if (depth === 0 && i < t.length - 1) { wraps = false; break }
+        if (depth < 0) { wraps = false; break }
+      }
+    }
+    if (!wraps || depth !== 0) break
+    t = t.slice(1, -1).trim()
+  }
+  return t
+}
+
+/** 求值中间值：ArgVal / 对象字面量 / 数组字面量 / null */
+type EvalVal = ArgVal | Record<string, ArgVal> | ForEachItem[] | null
+
+const isArgVal = (v: EvalVal | undefined): v is ArgVal =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && 't' in (v as object)
+
+function truthy(v: EvalVal | undefined): boolean | undefined {
+  if (v === undefined) return undefined
+  if (v === null) return false
+  if (Array.isArray(v)) return true
+  if (!isArgVal(v)) return true
+  if (v.t === 'bool') return v.v
+  if (v.t === 'num') return v.v !== 0
+  if (v.t === 'str') return v.v.length > 0
+  return undefined
+}
+
+function toText(v: EvalVal | undefined): string | undefined {
+  if (v === null) return 'null'
+  if (v === undefined || !isArgVal(v)) return undefined
+  if (v.t === 'str') return v.v
+  if (v.t === 'num' || v.t === 'bool') return String(v.v)
+  return undefined
+}
+
+const numOf = (v: EvalVal | undefined): number | undefined =>
+  isArgVal(v) && v.t === 'num' ? v.v : undefined
+
+/** 扫描顶层二元运算符的最后一次出现（左结合递归用）；'+/-' 防负号/连符误判 */
+function scanLastOp(s: string, ops: readonly string[]): { idx: number; op: string } | null {
+  let depth = 0
+  let quote = ''
+  let found: { idx: number; op: string } | null = null
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      if (ch === '\\') { i++; continue }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') depth--
+    if (depth !== 0) continue
+    for (const op of ops) {
+      if (!s.startsWith(op, i)) continue
+      if ((op === '+' || op === '-') && (i === 0 || '+-*/%('.includes(s[i - 1]))) continue
+      found = { idx: i, op }
+    }
+  }
+  return found
+}
+
+/** 顶层三元 '?'（排除 ?. 与 ??） */
+function findTernaryQ(s: string): number {
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      if (ch === '\\') { i++; continue }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') depth--
+    if (depth === 0 && ch === '?' && s[i + 1] !== '?' && s[i + 1] !== '.' && s[i - 1] !== '?') return i
+  }
+  return -1
+}
+
+interface PostStep { kind: 'prop' | 'index'; key: string }
+
+/** 从 start 位置解析后缀链（.prop / ?.prop / [expr]） */
+function parseChain(s: string, start: number): { base: string; steps: PostStep[] } | null {
+  const steps: PostStep[] = []
+  let i = start
+  while (i < s.length) {
+    if (s.startsWith('?.', i) || s[i] === '.') {
+      i += s.startsWith('?.', i) ? 2 : 1
+      const m = /^[A-Za-z_$][\w$]*/.exec(s.slice(i))
+      if (!m) return null
+      steps.push({ kind: 'prop', key: m[0] })
+      i += m[0].length
+      continue
+    }
+    if (s[i] === '[') {
+      let d = 1
+      let j = i + 1
+      for (; j < s.length; j++) {
+        if (s[j] === '[') d++
+        else if (s[j] === ']') { d--; if (d === 0) break }
+      }
+      if (d !== 0) return null
+      steps.push({ kind: 'index', key: s.slice(i + 1, j) })
+      i = j + 1
+      continue
+    }
+    return null
+  }
+  return { base: s.slice(0, start), steps }
+}
+
+function applyStep(v: EvalVal, st: PostStep, states: IRState[]): EvalVal | undefined {
+  if (v === undefined) return undefined
+  if (st.kind === 'index') {
+    if (!Array.isArray(v)) return undefined
+    const n = numOf(evalVal(st.key, states))
+    if (n === undefined || n < 0 || n >= v.length) return undefined
+    const el = v[n]
+    if (typeof el === 'object') return el
+    return { t: typeof el === 'number' ? 'num' : 'str', v: el } as ArgVal
+  }
+  if (Array.isArray(v)) {
+    if (st.key === 'length') return { t: 'num', v: v.length }
+    return undefined
+  }
+  if (v === null) return undefined
+  if (!isArgVal(v)) return v[st.key]
+  if (v.t === 'obj') return v.v[st.key] // ctor obj 形态的对象（@State user: object = {...}）
+  if (v.t === 'str' && st.key === 'length') return { t: 'num', v: v.v.length }
+  return undefined
+}
+
+const CMP_OPS = ['===', '!==', '==', '!=', '>=', '<=', '>', '<'] as const
+
+/**
+ * 表达式小求值：字面量 / this.x 状态 / 三元 / 比较 / && || ?? / ! / 加减乘除 /
+ * 拼接 / 成员访问（.prop ?.prop [i]，含 .length）。求不出一律回退 undefined（不猜、不丢）。
+ */
+function evalVal(raw: string, states: IRState[]): EvalVal | undefined {
+  const s0 = raw.trim()
+  if (!s0) return undefined
+  const s = stripParens(s0)
+
+  // 三元 cond ? a : b
+  const q = findTernaryQ(s)
+  if (q >= 0) {
+    const rest = s.slice(q + 1)
+    const colon = findTopOp(rest, [':'])
+    if (colon < 0) return undefined
+    const c = truthy(evalVal(s.slice(0, q), states))
+    if (c === undefined) return undefined
+    return evalVal(c ? rest.slice(0, colon) : rest.slice(colon + 1), states)
+  }
+
+  // ??（左结合）
+  const nn = scanLastOp(s, ['??'])
+  if (nn) {
+    const l = evalVal(s.slice(0, nn.idx), states)
+    return l === undefined || l === null ? evalVal(s.slice(nn.idx + 2), states) : l
+  }
+
+  // || / &&
+  const orIdx = scanLastOp(s, ['||'])
+  if (orIdx) {
+    const l = truthy(evalVal(s.slice(0, orIdx.idx), states))
+    if (l === undefined) return undefined
+    return l ? { t: 'bool', v: true } : evalVal(s.slice(orIdx.idx + 2), states)
+  }
+  const andIdx = scanLastOp(s, ['&&'])
+  if (andIdx) {
+    const l = truthy(evalVal(s.slice(0, andIdx.idx), states))
+    if (l === undefined) return undefined
+    return l ? evalVal(s.slice(andIdx.idx + 2), states) : { t: 'bool', v: false }
+  }
+
+  // 比较（先长后短）
+  const ci = findTopOp(s, CMP_OPS)
+  if (ci > 0) {
+    const op = CMP_OPS.find(o => s.startsWith(o, ci))!
+    const l = evalVal(s.slice(0, ci), states)
+    const r = evalVal(s.slice(ci + op.length), states)
+    if (l === undefined || r === undefined) return undefined
+    if (op === '===' || op === '==') return { t: 'bool', v: eqVal(l, r) }
+    if (op === '!==' || op === '!=') return { t: 'bool', v: !eqVal(l, r) }
+    const ln = numOf(l)
+    const rn = numOf(r)
+    if (ln === undefined || rn === undefined) return undefined
+    switch (op) {
+      case '>=': return { t: 'bool', v: ln >= rn }
+      case '<=': return { t: 'bool', v: ln <= rn }
+      case '>': return { t: 'bool', v: ln > rn }
+      case '<': return { t: 'bool', v: ln < rn }
+    }
+    return undefined
+  }
+
+  // 加减（左结合；全数值求值，'+' 遇非数值转拼接）
+  const add = scanLastOp(s, ['+', '-'])
+  if (add) {
+    const l = evalVal(s.slice(0, add.idx), states)
+    const r = evalVal(s.slice(add.idx + 1), states)
+    if (l === undefined || r === undefined) return undefined
+    const ln = numOf(l)
+    const rn = numOf(r)
+    if (ln !== undefined && rn !== undefined) {
+      return { t: 'num', v: add.op === '+' ? ln + rn : ln - rn }
+    }
+    if (add.op === '+') {
+      const lt = toText(l)
+      const rt = toText(r)
+      if (lt !== undefined && rt !== undefined) return { t: 'str', v: lt + rt }
+    }
+    return undefined
+  }
+
+  // 乘除余（左结合，仅数值）
+  const mul = scanLastOp(s, ['*', '/', '%'])
+  if (mul) {
+    const l = numOf(evalVal(s.slice(0, mul.idx), states))
+    const r = numOf(evalVal(s.slice(mul.idx + 1), states))
+    if (l === undefined || r === undefined) return undefined
+    if (mul.op === '*') return { t: 'num', v: l * r }
+    if (r === 0) return undefined
+    return { t: 'num', v: mul.op === '/' ? l / r : l % r }
+  }
+
+  // 一元 !
+  if (s.startsWith('!')) {
+    const v = truthy(evalVal(s.slice(1), states))
+    return v === undefined ? undefined : { t: 'bool', v: !v }
+  }
+
+  // 成员访问后缀链：逐步尝试最长的可求值基值前缀
+  for (let i = 0; i < s.length; i++) {
+    const isChainStart = s[i] === '.' || s[i] === '[' || (s[i] === '?' && s[i + 1] === '.')
+    if (!isChainStart) continue
+    if (s[i] === '.' && (s[i - 1] === '?' || (/\d/.test(s[i - 1] ?? '') && /\d/.test(s[i + 1] ?? '')))) continue
+    if (s[i] === '[' && i === 0) break // 数组字面量不是后缀
+    const chain = parseChain(s, i)
+    if (!chain) continue
+    let v = evalVal(chain.base, states)
+    if (v === undefined) continue
+    for (const st of chain.steps) {
+      v = applyStep(v, st, states)
+      if (v === undefined) break
+    }
+    if (v !== undefined) return v
+  }
+
+  // 主值：字符串 / 数字 / 布尔 / null / this.x（对象、数组、raw 初值递归）
+  const strM = s.match(/^'([^']*)'$/) ?? s.match(/^"([^"]*)"$/)
+  if (strM) return { t: 'str', v: strM[1] }
+  if (/^-?\d+(\.\d+)?$/.test(s)) return { t: 'num', v: parseFloat(s) }
+  if (s === 'true' || s === 'false') return { t: 'bool', v: s === 'true' }
+  if (s === 'null' || s === 'undefined') return null
+  const thisM = s.match(/^this\.(\w+)$/)
+  if (thisM) {
+    const st = findState(states, thisM[1])
+    if (!st) return undefined
+    if (st.init.t === 'raw') {
+      const rv = st.init.v.trim()
+      if (rv.startsWith('{')) {
+        const o = parseObjectLiteral(rv)
+        if (o) return o
+      }
+      if (rv.startsWith('[')) {
+        const a = parseArrayLiteral(rv)
+        if (a) return a
+      }
+      return evalVal(rv, states)
+    }
+    return st.init
+  }
+  // 枚举路径（Color.Red 等）
+  if (/^[A-Za-z_$][\w$]*(\.[\w$]+)+$/.test(s)) return { t: 'enum', v: s }
+  return undefined
+}
+
+/** 宽松相等（预览够用）：同类型比值，num 与可转文本互比 */
+function eqVal(l: EvalVal, r: EvalVal): boolean {
+  if (l === null || r === null) return l === null && r === null
+  const lt = toText(l)
+  const rt = toText(r)
+  if (lt === undefined || rt === undefined) return false
+  if (isArgVal(l) && isArgVal(r) && l.t === 'num' && r.t === 'num') return l.v === r.v
+  return lt === rt
+}
+
+/** 公开入口：仅当求值结果为 ArgVal 时返回（对象/数组中间值不外泄） */
+export function evalExpr(raw: string, states: IRState[]): ArgVal | undefined {
+  const v = evalVal(raw, states)
+  return isArgVal(v) ? v : undefined
+}
+
+/** ForEach 数据项：原始值或对象字面量（值为结构化 ArgVal） */
+export type ForEachItem = string | number | Record<string, ArgVal>
+
+/** 对象字面量单项解析（ForEach 用）：key: 字串/数字/布尔/枚举路径/其余 raw */
+function parseObjectLiteral(raw: string): Record<string, ArgVal> | null {
+  const t = raw.trim()
+  if (!t.startsWith('{') || !t.endsWith('}')) return null
+  const inner = t.slice(1, -1).trim()
+  const out: Record<string, ArgVal> = {}
+  if (!inner) return out
+  for (const pair0 of splitTop(inner, ',')) {
+    const pair = pair0.trim()
+    const ci = findTopOp(pair, [':'])
+    if (ci <= 0) return null
+    const k = pair.slice(0, ci).trim().replace(/^['"]|['"]$/g, '')
+    const v = pair.slice(ci + 1).trim()
+    const strM = v.match(/^'([^']*)'$/) ?? v.match(/^"([^"]*)"$/)
+    if (strM) { out[k] = { t: 'str', v: strM[1] }; continue }
+    if (/^-?\d+(\.\d+)?$/.test(v)) { out[k] = { t: 'num', v: parseFloat(v) }; continue }
+    if (v === 'true' || v === 'false') { out[k] = { t: 'bool', v: v === 'true' }; continue }
+    if (/^[A-Za-z_$][\w$]*(\.[\w$]+)+$/.test(v)) { out[k] = { t: 'enum', v }; continue }
+    out[k] = { t: 'raw', v }
+  }
+  return out
+}
+
+/** 数组字面量原文 → 条目列表（原始值或对象）；含不可解析部分时返回 null（不强行求值） */
+export function parseArrayLiteral(raw: string): ForEachItem[] | null {
+  const t = raw.trim()
+  if (!t.startsWith('[') || !t.endsWith(']')) return null
+  const inner = t.slice(1, -1).trim()
+  if (!inner) return []
+  const out: ForEachItem[] = []
+  for (const p0 of splitTop(inner, ',')) {
+    const p = p0.trim()
+    if (!p) continue // 尾逗号（真实代码常见）
+    if (p.startsWith('{')) {
+      const o = parseObjectLiteral(p)
+      if (!o) return null
+      out.push(o)
+      continue
+    }
+    const m = p.match(/^'([^']*)'$/) ?? p.match(/^"([^"]*)"$/)
+    if (m) { out.push(m[1]); continue }
+    if (/^-?\d+(\.\d+)?$/.test(p)) { out.push(parseFloat(p)); continue }
+    return null
+  }
+  return out
+}
+
+// ---------- @State 轻量求值（禁 eval，字面量形态 + 小表达式） ----------
 
 export function resolveNum(a: ArgVal | undefined, states: IRState[]): number | undefined {
   if (!a) return undefined
@@ -358,6 +936,10 @@ export function resolveNum(a: ArgVal | undefined, states: IRState[]): number | u
     if (!m) return undefined
     const st = findState(states, m[1])
     return st && st.init.t === 'num' ? st.init.v : undefined
+  }
+  if (a.t === 'raw') {
+    const v = evalExpr(a.v, states)
+    return v && v.t === 'num' ? v.v : undefined
   }
   return undefined
 }
@@ -370,6 +952,12 @@ export function resolveStr(a: ArgVal | undefined, states: IRState[]): string | u
     if (!m) return undefined
     const st = findState(states, m[1])
     return st && st.init.t === 'str' ? st.init.v : undefined
+  }
+  if (a.t === 'raw') {
+    const v = evalExpr(a.v, states)
+    if (!v) return undefined
+    if (v.t === 'str') return v.v
+    if (v.t === 'num' || v.t === 'bool') return String(v.v)
   }
   return undefined
 }
@@ -384,36 +972,25 @@ export function resolveBool(a: ArgVal | undefined, states: IRState[]): boolean |
     return st && st.init.t === 'bool' ? st.init.v : undefined
   }
   if (a.t === 'raw') {
-    const raw = a.v.trim()
-    const paren = raw.match(/^\(\s*this\.(\w+)\s*\)$/)
-    if (paren) {
-      const st = findState(states, paren[1])
-      return st && st.init.t === 'bool' ? st.init.v : undefined
-    }
-    // this.x === 0 形态：与 @State 数值初值比较
-    const cmp = raw.match(/this\.(\w+)\s*={2,3}\s*(-?\d+(?:\.\d+)?)/)
-    if (cmp) {
-      const st = findState(states, cmp[1])
-      return st && st.init.t === 'num' ? st.init.v === parseFloat(cmp[2]) : undefined
-    }
-    if (/\btrue\b/.test(raw)) return true
-    if (/\bfalse\b/.test(raw)) return false
+    const v = evalExpr(a.v, states)
+    if (v) return truthy(v)
+    // 宽松回退：历史行为（文本含 true/false 字面量）
+    if (/\btrue\b/.test(a.v)) return true
+    if (/\bfalse\b/.test(a.v)) return false
   }
   return undefined
 }
 
 // ---------- If / Else 配对 ----------
 
-/** If 是否折叠：条件原文含 false 字面量，或条件为 (this.x) 且对应 @State 初值为 false */
+/** If 是否折叠：条件经 evalExpr 求值为 false（含 this.x 布尔/比较/三元等），求不出按不折叠 */
 export function ifCollapsed(ifNode: IRNode, states: IRState[]): boolean {
   const a = ifNode.ctorArgs[0]
   const raw = a && a.t === 'raw' ? a.v : ''
+  const v = evalExpr(raw, states)
+  if (v && v.t === 'bool') return !v.v
+  // 宽松回退：文本含 false 字面量（历史行为）
   if (/\bfalse\b/.test(raw)) return true
-  const m = raw.match(/^\(\s*(!?)\s*this\.(\w+)\s*\)$/)
-  if (m) {
-    const st = findState(states, m[2])
-    if (st && st.init.t === 'bool') return m[1] === '!' ? st.init.v : !st.init.v
-  }
   return false
 }
 

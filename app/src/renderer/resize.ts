@@ -33,6 +33,9 @@ export function startResize(path: Path, dim: 'width' | 'height' | 'both', e: Rea
   store.pushHistory()
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
+  // 窗外松开/系统取消/失焦兜底收尾，避免拖拽态卡死
+  window.addEventListener('pointercancel', onUp)
+  window.addEventListener('blur', onUp)
 }
 
 const toVp = (start: number, deltaCss: number) =>
@@ -57,4 +60,7 @@ function onUp() {
   drag = null
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
+  window.removeEventListener('pointercancel', onUp)
+  window.removeEventListener('blur', onUp)
 }
+

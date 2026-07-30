@@ -2,7 +2,7 @@ import React, { CSSProperties, useState } from 'react'
 import { getModifier } from '../ir/mutate'
 import {
   ViewProps, frameOf, ctorObj, vp, num, keyOf,
-  flexJustify, itemAlign, resolveNum,
+  flexJustify, itemAlign, resolveNum, resolveStr,
 } from './shared'
 
 /**
@@ -181,6 +181,33 @@ export function TabContentView({ node, path, ctx, hidden }: ViewProps & { hidden
       ...f.style,
     }}>
       {ctx.renderChildren(node, path)}
+      {f.indicator}
+      {f.handles}
+    </div>
+  )
+}
+
+/** Badge({ count, value })：独子容器 + 右上角角标（count>0 显示数字；value 字符串显示文本） */
+export function BadgeView({ node, path, ctx }: ViewProps) {
+  const f = frameOf(node, path, ctx)
+  const o = ctorObj(node)
+  const count = resolveNum(o?.count, ctx.states)
+  const value = resolveStr(o?.value, ctx.states)
+  const showNum = count != null && count > 0
+  return (
+    <div {...f.common} style={{ position: 'relative', display: 'inline-block', ...f.style }}>
+      {ctx.renderChildren(node, path)}
+      {(showNum || value) && (
+        <span style={{
+          position: 'absolute', top: -6, right: -6, zIndex: 1,
+          minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
+          background: '#FA2A2D', color: '#fff', fontSize: 10,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none',
+        }}>
+          {value ?? (count! > 99 ? '99+' : count)}
+        </span>
+      )}
       {f.indicator}
       {f.handles}
     </div>
