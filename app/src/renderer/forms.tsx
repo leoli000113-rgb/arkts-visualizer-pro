@@ -104,3 +104,23 @@ export function RadioView({ node, path, ctx }: ViewProps) {
     </div>
   )
 }
+
+/** Select(options).selected(i).value(str)：拟态下拉框（选项多为运行时 .map()，不可静态求值→显示 .value 文本或占位） */
+export function SelectView({ node, path, ctx }: ViewProps) {
+  const f = frameOf(node, path, ctx)
+  const value = resolveStr(getModifier(node, 'value')?.args[0], ctx.states)
+  return (
+    <div {...f.common} style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+      padding: '6px 10px', border: '1px solid #cbd5e0', borderRadius: 4, background: '#fff',
+      minWidth: 60, ...f.style,
+    }}>
+      <span style={{ fontSize: 13, color: value ? '#2d3748' : '#a0aec0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {value ?? '请选择'}
+      </span>
+      <span style={{ fontSize: 10, color: '#a0aec0' }}>▾</span>
+      {f.indicator}
+      {f.handles}
+    </div>
+  )
+}

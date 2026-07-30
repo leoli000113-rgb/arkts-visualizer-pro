@@ -30,8 +30,8 @@ describe('registry 完整性', () => {
     expect(PALETTE_GROUPS[0].items).toEqual(['Column', 'Row', 'Stack', 'RelativeContainer', 'Flex', 'Blank'])
     expect(PALETTE_GROUPS[1].items).toEqual(['Scroll', 'List', 'Grid', 'Tabs', 'ListItem', 'GridItem', 'TabContent', 'Badge'])
     expect(PALETTE_GROUPS[2].items).toEqual(['Text', 'Button', 'Image', 'Video', 'Divider'])
-    expect(PALETTE_GROUPS[3].items).toEqual(['TextInput', 'Toggle', 'Slider', 'Checkbox', 'Radio', 'Progress'])
-    expect(PALETTE_GROUPS[4].items).toEqual(['Rating'])
+    expect(PALETTE_GROUPS[3].items).toEqual(['TextInput', 'Toggle', 'Slider', 'Checkbox', 'Radio', 'Select', 'Progress'])
+    expect(PALETTE_GROUPS[4].items).toEqual(['Rating', 'LoadingProgress'])
   })
 
   it('每个 palette 元件都有 makeDefault', () => {

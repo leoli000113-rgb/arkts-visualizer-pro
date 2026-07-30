@@ -14,8 +14,8 @@ import {
   FlexView, ScrollView, ListView, ListItemView,
   GridView, GridItemView, TabsView, TabContentView,
 } from './containers'
-import { TextInputView, ToggleView, SliderView, CheckboxView, RadioView } from './forms'
-import { ProgressView, VideoView, DividerView, BlankView, RatingView } from './feedback'
+import { TextInputView, ToggleView, SliderView, CheckboxView, RadioView, SelectView } from './forms'
+import { ProgressView, VideoView, DividerView, BlankView, RatingView, LoadingProgressView } from './feedback'
 import { BadgeView } from './containers'
 import { IfView, ElseView, ForEachView, substTemplate } from './flow'
 import { instanceStates } from './components'
@@ -29,9 +29,9 @@ export const SUPPORTED = new Set([
   // 基础
   'Text', 'Button', 'Image', 'Video', 'Divider', 'Blank',
   // 表单
-  'TextInput', 'Toggle', 'Slider', 'Checkbox', 'Radio',
+  'TextInput', 'Toggle', 'Slider', 'Checkbox', 'Radio', 'Select',
   // 反馈
-  'Progress', 'Rating',
+  'Progress', 'Rating', 'LoadingProgress',
   // 结构/流程
   'If', 'Else', 'ForEach',
   // Builder 调用点镜像
@@ -296,6 +296,7 @@ export function renderNode(
     case 'Slider': return <SliderView key={k} {...view} />
     case 'Checkbox': return <CheckboxView key={k} {...view} />
     case 'Radio': return <RadioView key={k} {...view} />
+    case 'Select': return <SelectView key={k} {...view} />
 
     // —— 反馈组件组 ——
     case 'Progress': return <ProgressView key={k} {...view} />
@@ -303,6 +304,7 @@ export function renderNode(
     case 'Divider': return <DividerView key={k} {...view} />
     case 'Blank': return <BlankView key={k} {...view} />
     case 'Rating': return <RatingView key={k} {...view} />
+    case 'LoadingProgress': return <LoadingProgressView key={k} {...view} />
     case 'Badge': return <BadgeView key={k} {...view} />
 
     // —— 结构/流程 ——

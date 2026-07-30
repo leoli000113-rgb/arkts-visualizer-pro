@@ -235,6 +235,13 @@ export const SPECS: ComponentSpec[] = [
       { kind: 'ctorObjNum', label: 'rating', key: 'rating', tip: '当前评分（0–5）' },
     ],
   },
+  {
+    type: 'LoadingProgress', category: '反馈', palette: true, container: false,
+    makeDefault: () => ({ type: 'LoadingProgress', ctorArgs: [], children: [], modifiers: [] }),
+    fields: [
+      { kind: 'color', label: 'color', mod: 'color' },
+    ],
+  },
 
   // —— 表单 ——
   {
@@ -282,6 +289,19 @@ export const SPECS: ComponentSpec[] = [
   {
     type: 'Radio', category: '表单', palette: true, container: false,
     makeDefault: () => ({ type: 'Radio', ctorArgs: [obj({ value: str('0'), group: str('radioGroup') })], children: [], modifiers: [] }),
+  },
+  {
+    type: 'Select', category: '表单', palette: true, container: false,
+    makeDefault: () => ({
+      type: 'Select',
+      ctorArgs: [{ t: 'raw', v: "[{ value: '选项 A' }, { value: '选项 B' }]" }],
+      children: [], modifiers: [mod('selected', [num(0)]), mod('value', [str('选项 A')])],
+    }),
+    fields: [
+      { kind: 'num', label: 'selected', mod: 'selected' },
+      { kind: 'str', label: 'value', mod: 'value' },
+    ],
+    summary: (n) => truncate(argText(getModifier(n, 'value')?.args[0]), 12),
   },
   {
     type: 'Progress', category: '表单', palette: true, container: false,

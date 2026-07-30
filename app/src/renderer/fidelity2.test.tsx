@@ -6,7 +6,7 @@ import { renderNode } from './Renderer'
 import { evalExpr, resolveNum, resolveStr, resolveBool, styleOf, parseArrayLiteral } from './shared'
 import { extractStyles } from './styleTable'
 import { extractComponents, buildersOf } from './components'
-import { IRState } from '../ir/types'
+import { IRState, IRFile } from '../ir/types'
 
 const states: IRState[] = [
   { name: 'count', type: 'number', init: { t: 'num', v: 0 }, decorator: '@State' },
@@ -363,5 +363,104 @@ struct T {
     expect(html).toContain('>5<') // Badge 角标
     expect(html).toContain('★')   // Rating
     expect(html).not.toContain('ir-custom')
+  })
+})
+
+describe('MovieGenerate_2 保真：$r 资源色 / Select / LoadingProgress / .font / 渐变方向', () => {
+  function envOf(ir: IRFile) {
+    const table = extractStyles(ir)
+    return {
+      states: ir.states, aids: false,
+      styles: table.styles, extends: table.extends,
+      components: extractComponents(ir), builders: buildersOf(ir),
+    }
+  }
+  const render = (ir: IRFile) =>
+    renderToStaticMarkup(<>{renderNode(ir.root, [], null, () => {}, null, false, envOf(ir))}</>)
+
+  it("$r('app.color.*') 解析为内置语义色", () => {
+    const src = `@Entry
+@Component
+struct T {
+  build() {
+    Column() {
+      Text('hi').fontColor($r('app.color.primary'))
+    }
+    .backgroundColor($r('app.color.surface'))
+  }
+}
+`
+    const ir = parse(src)
+    const html = render(ir)
+    expect(html).toContain('#667eea') // primary
+    expect(html).toContain('#ffffff') // surface
+  })
+
+  it('Select 渲染当前值 + 下拉箭头', () => {
+    const src = `@Entry
+@Component
+struct T {
+  build() {
+    Column() {
+      Select([{ value: 'groq' }, { value: 'qwen' }]).selected(0).value('groq')
+    }
+  }
+}
+`
+    const ir = parse(src)
+    const html = render(ir)
+    expect(html).toContain('groq')
+    expect(html).toContain('▾')
+    expect(html).not.toContain('ir-custom')
+  })
+
+  it('LoadingProgress 渲染旋转菊花', () => {
+    const src = `@Entry
+@Component
+struct T {
+  build() {
+    Column() {
+      LoadingProgress().color($r('app.color.primary'))
+    }
+  }
+}
+`
+    const ir = parse(src)
+    const html = render(ir)
+    expect(html).toContain('ir-loading')
+    expect(html).not.toContain('ir-custom')
+  })
+
+  it('.font({ size }) → fontSize', () => {
+    const s = styleOf({
+      type: 'Text', ctorArgs: [], children: [],
+      modifiers: [{ name: 'font', args: [{ t: 'obj', v: { size: { t: 'num', v: 22 } } }] }],
+    })
+    expect(s.fontSize).toBeCloseTo(13.2) // 22vp×0.6
+  })
+
+  it('渐变头：direction + 字符串色（贴近 Index 头部）', () => {
+    const src = `@Entry
+@Component
+struct T {
+  build() {
+    Column() {
+      Text('🎬 视频智能解析')
+        .fontSize(22)
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Bold)
+    }
+    .width('100%')
+    .linearGradient({ direction: GradientDirection.Right, colors: [['#667eea', 0], ['#764ba2', 1]] })
+    .borderRadius({ bottomLeft: 16, bottomRight: 16 })
+  }
+}
+`
+    const ir = parse(src)
+    const html = render(ir)
+    expect(html).toContain('视频智能解析')
+    expect(html).toContain('linear-gradient(90deg')
+    expect(html).toContain('#667eea')
+    expect(html).toContain('#764ba2')
   })
 })

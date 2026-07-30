@@ -20,8 +20,8 @@ import { ArgVal, IRFile, IRMember, IRNode, IRState } from '../ir/types'
  */
 
 // 表达式继续符：primary 之后遇到这些符号，说明是复合表达式，整体按 raw 保留
-// （[ 为下标访问 arr[i].x；= 覆盖赋值/==/===）
-const TAIL_OPS = new Set(['+', '-', '*', '/', '%', '?', ':', '&&', '||', '??', '==', '===', '!=', '!==', '<', '>', '<=', '>=', '=', '['])
+// （[ 为下标访问 arr[i].x；= 覆盖赋值/==/===；! 覆盖非空断言 expr!.x 与 != / !==）
+const TAIL_OPS = new Set(['+', '-', '*', '/', '%', '?', ':', '&&', '||', '??', '==', '===', '!=', '!==', '<', '>', '<=', '>=', '=', '[', '!'])
 /** 结构性节点（不参与根组件判定） */
 const NON_STRUCTURAL = new Set(['Comment', 'Expr'])
 
@@ -190,6 +190,8 @@ export class Parser {
               ctorArgs: [n.ctorArgs[0], { t: 'raw', v: m[1] }],
               children: builderMap.get(m[1])!,
               modifiers: [],
+              pos: n.pos,
+              end: n.end,
             }
             builderMap.delete(m[1])
             continue
@@ -304,7 +306,7 @@ export class Parser {
     while (!this.at('}') && this.peek().kind !== 'eof') {
       if (this.peek().kind === 'comment') {
         const t = this.next()
-        out.push({ type: 'Comment', ctorArgs: [{ t: 'raw', v: t.text }], children: [], modifiers: [] })
+        out.push({ type: 'Comment', ctorArgs: [{ t: 'raw', v: t.text }], children: [], modifiers: [], pos: t.pos, end: t.end })
         continue
       }
       try {
@@ -320,37 +322,44 @@ export class Parser {
     if (this.atId('if')) return this.parseIf()
     // this.xxx(...) 表达式语句（如 this.buildHeader()）→ Expr 原文节点
     if (this.atId('this') && this.toks[this.p + 1]?.text === '.') {
-      return [{ type: 'Expr', ctorArgs: [{ t: 'raw', v: this.captureStatement() }], children: [], modifiers: [] }]
+      const startPos = this.peek().pos
+      const raw = this.captureStatement()
+      return [{ type: 'Expr', ctorArgs: [{ t: 'raw', v: raw }], children: [], modifiers: [], pos: startPos, end: this.prevEnd() }]
     }
     return [this.parseComponent()]
   }
 
   private parseIf(): IRNode[] {
+    const startPos = this.peek().pos
     this.expectId('if')
     const cond = this.captureBalanced('(', ')')
     this.eat('{')
     const children = this.parseChildren()
     this.eat('}')
-    const ifNode: IRNode = { type: 'If', ctorArgs: [{ t: 'raw', v: cond }], children, modifiers: [] }
+    const ifNode: IRNode = { type: 'If', ctorArgs: [{ t: 'raw', v: cond }], children, modifiers: [], pos: startPos, end: this.prevEnd() }
     const nodes: IRNode[] = [ifNode]
     if (this.atId('else')) {
+      const elsePos = this.peek().pos
       this.next()
       let elseChildren: IRNode[]
-      if (this.atId('if')) elseChildren = this.parseIf() // else if 链
-      else {
+      if (this.atId('if')) {
+        elseChildren = this.parseIf() // else if 链
+        nodes.push({ type: 'Else', ctorArgs: [], children: elseChildren, modifiers: [], pos: elsePos, end: this.prevEnd() })
+      } else {
         this.eat('{')
         elseChildren = this.parseChildren()
         this.eat('}')
+        nodes.push({ type: 'Else', ctorArgs: [], children: elseChildren, modifiers: [], pos: elsePos, end: this.prevEnd() })
       }
-      nodes.push({ type: 'Else', ctorArgs: [], children: elseChildren, modifiers: [] })
     }
     return nodes
   }
 
   private parseComponent(): IRNode {
+    const startPos = this.peek().pos
     const type = this.expectId()
-    if (type === 'ForEach') return this.parseForEach()
-    const node: IRNode = { type, ctorArgs: [], children: [], modifiers: [] }
+    if (type === 'ForEach') return this.parseForEach(startPos)
+    const node: IRNode = { type, ctorArgs: [], children: [], modifiers: [], pos: startPos }
     if (this.at('(')) node.ctorArgs = this.parseArgList()
     if (this.at('{')) {
       this.eat('{')
@@ -358,10 +367,11 @@ export class Parser {
       this.eat('}')
     }
     this.parseModifierChain(node)
+    node.end = this.prevEnd()
     return node
   }
 
-  private parseForEach(): IRNode {
+  private parseForEach(startPos: number): IRNode {
     this.eat('(')
     const items = this.parseArgVal()
     this.eat(',')
@@ -382,7 +392,7 @@ export class Parser {
       ctorArgs.push(this.parseArgVal()) // keyGenerator 箭头 → raw
     }
     this.eat(')')
-    return { type: 'ForEach', ctorArgs, children, modifiers: [] }
+    return { type: 'ForEach', ctorArgs, children, modifiers: [], pos: startPos, end: this.prevEnd() }
   }
 
   private parseModifierChain(node: IRNode) {
@@ -500,6 +510,7 @@ export class Parser {
   /** 子节点解析失败：吞掉无法识别的原文，生成占位节点，保证不崩不丢（ADR-008） */
   private recoverUnknown(errMsg: string): IRNode {
     const start = this.p
+    const startPos = this.peek().pos
     let depth = 0
     while (this.peek().kind !== 'eof') {
       const t = this.peek()
@@ -535,6 +546,7 @@ export class Parser {
       type: 'Unknown', unsupported: true,
       ctorArgs: [{ t: 'raw', v: `/* 解析失败: ${errMsg} */ ${this.rawSlice(start, this.p)}` }],
       children: [], modifiers: [],
+      pos: startPos, end: this.prevEnd(),
     }
   }
 }

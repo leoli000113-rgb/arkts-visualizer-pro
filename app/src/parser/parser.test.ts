@@ -208,3 +208,32 @@ struct T {
     expect(s2).toBe(s1)
   })
 })
+
+describe('IR 源码位置盖戳（pos/end）', () => {
+  const src = `@Entry
+@Component
+struct T {
+  @State ok: boolean = true
+  build() {
+    Column() {
+      Text('hi')
+      if (this.ok) { Text('yes') } else { Text('no') }
+      ForEach([1, 2], (n) => { Text('n') })
+    }
+  }
+}
+`
+  it('build 体内组件/结构节点带非负 pos/end 且 src.slice 含类型名', () => {
+    const ir = parse(src)
+    expect(ir.root.pos).toBeGreaterThanOrEqual(0)
+    expect(ir.root.end!).toBeGreaterThan(ir.root.pos!)
+    expect(src.slice(ir.root.pos, ir.root.end)).toContain('Column')
+    const text = ir.root.children.find(c => c.type === 'Text')!
+    expect(text.pos!).toBeGreaterThan(ir.root.pos!)
+    expect(src.slice(text.pos, text.end)).toMatch(/^Text/)
+    const ifNode = ir.root.children.find(c => c.type === 'If')!
+    expect(src.slice(ifNode.pos!, ifNode.end)).toMatch(/^if \(this\.ok\)/)
+    const fe = ir.root.children.find(c => c.type === 'ForEach')!
+    expect(src.slice(fe.pos!, fe.end)).toContain('ForEach')
+  })
+})

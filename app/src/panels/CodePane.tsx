@@ -4,6 +4,8 @@ import { javascript } from '@codemirror/lang-javascript'
 import { linter, lintGutter, forceLinting, Diagnostic } from '@codemirror/lint'
 import { EditorView } from '@codemirror/view'
 import { useStore } from '../store/store'
+import { parse } from '../parser/parser'
+import { getNodeAtPath } from '../ir/mutate'
 
 /** 从 parser 报错文本提取字符位置（"…在位置 123 遇到…"），无位置信息返回 null */
 function errorPos(err: string): number | null {
@@ -19,6 +21,7 @@ export function CodePane() {
   const code = useStore(s => s.code)
   const setCode = useStore(s => s.setCode)
   const error = useStore(s => s.error)
+  const selectedPath = useStore(s => s.selectedPath)
   const [text, setText] = useState(code)
   const lastPushed = useRef(code)
   const timer = useRef<number | undefined>(undefined)
@@ -38,6 +41,25 @@ export function CodePane() {
   useEffect(() => {
     if (viewRef.current) forceLinting(viewRef.current)
   }, [error])
+
+  // 大纲树/画布选中节点 → 代码跳转到对应源码位置。
+  // 注意：结构编辑后 store 的 ir 是被 mutate 的树（pos 与新 code 错位），
+  // 故用当前 code 重新 parse 一份拿 fresh pos，保证偏移与编辑器内容一致。
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || !selectedPath) return
+    let fresh
+    try { fresh = parse(code) } catch { return }
+    const node = getNodeAtPath(fresh.root, selectedPath)
+    if (!node || node.pos == null) return
+    const len = view.state.doc.length
+    const pos = Math.max(0, Math.min(node.pos, len))
+    const line = view.state.doc.lineAt(pos)
+    view.dispatch({
+      selection: { anchor: line.from, head: Math.min(line.to, len) },
+      scrollIntoView: true,
+    })
+  }, [selectedPath, code])
 
   const extensions = useMemo(() => [
     javascript({ typescript: true }),

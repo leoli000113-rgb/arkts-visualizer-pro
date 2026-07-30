@@ -63,6 +63,29 @@ export function color(a: ArgVal | undefined): string | undefined {
   if (a.t === 'str') return a.v
   return undefined
 }
+
+/**
+ * $r('app.color.<name>') → 内置语义色表（不读外部项目 color.json）。
+ * 名字取 MovieGenerate_2 等常见调色板（紫蓝主色 + 浅灰文本），未命中返回 undefined。
+ */
+const RESOURCE_COLORS: Record<string, string> = {
+  primary: '#667eea',
+  text_primary: '#2d3748',
+  text_secondary: '#4a5568',
+  text_hint: '#a0aec0',
+  surface: '#ffffff',
+  border: '#e2e8f0',
+  error: '#e53e3e',
+  warning: '#dd6b20',
+  success: '#48bb78',
+  bg_gradient_start: '#f0f4ff',
+  bg_gradient_end: '#a78bfa',
+}
+export function resourceColor(a: ArgVal | undefined): string | undefined {
+  if (!a || a.t !== 'raw') return undefined
+  const m = a.v.match(/\$r\(\s*['"]app\.color\.([\w]+)['"]\s*\)/)
+  return m ? RESOURCE_COLORS[m[1]] : undefined
+}
 export function box(a: ArgVal | undefined): string | undefined {
   if (!a) return undefined
   if (a.t === 'num') return `${vp(a.v)}px`
@@ -168,7 +191,10 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
   }
   const colorE = (a: ArgVal | undefined): string | undefined => {
     if (!a) return undefined
-    if (a.t === 'raw') { const v = evalExpr(a.v, states); return v ? color(v) : undefined }
+    if (a.t === 'raw') {
+      const rc = resourceColor(a); if (rc) return rc
+      const v = evalExpr(a.v, states); return v ? color(v) : undefined
+    }
     return color(a)
   }
   let hasMaxLines = false
@@ -181,6 +207,11 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
       case 'margin': if (!noMargin) s.margin = box(a0); break
       case 'backgroundColor': s.backgroundColor = colorE(a0); break
       case 'fontSize': if (numE(a0) != null) s.fontSize = vp(numE(a0)!); break
+      case 'font': {
+        // .font({ size: 14, weight, family }) — 只取 size（weight/family 较少用）
+        if (a0?.t === 'obj') { const sz = numE(a0.v.size); if (sz != null) s.fontSize = vp(sz!) }
+        break
+      }
       case 'fontColor': s.color = colorE(a0); break
       case 'borderRadius': if (numE(a0) != null) s.borderRadius = vp(numE(a0)!); break
       case 'justifyContent': s.justifyContent = flexJustify(a0); break
@@ -316,10 +347,15 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
         break
       }
       case 'linearGradient': {
-        // .linearGradient({ angle, colors: [[色, 位置], ...] }) — 位置 0~1
+        // .linearGradient({ angle | direction, colors: [[色, 位置], ...] }) — 位置 0~1
         if (a0 && a0.t === 'obj') {
           const o = a0.v
-          const angle = num(o.angle) ?? 180
+          // direction: GradientDirection.* → CSS 角度（0=上→下，顺时针）
+          let angle = num(o.angle)
+          if (angle == null && o.direction && o.direction.t === 'enum') {
+            angle = ({ 'GradientDirection.Top': 0, 'GradientDirection.Bottom': 180, 'GradientDirection.Left': 270, 'GradientDirection.Right': 90, 'GradientDirection.TopToBottom': 180, 'GradientDirection.BottomToTop': 0, 'GradientDirection.LeftToRight': 90, 'GradientDirection.RightToLeft': 270 } as Record<string, number>)[o.direction.v]
+          }
+          if (angle == null) angle = 180
           const raw = o.colors && o.colors.t === 'raw' ? o.colors.v : undefined
           if (raw) {
             const stops: string[] = []
@@ -384,7 +420,10 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
 /** 求值感知颜色解析：raw 表达式经 evalExpr 小求值后再映射 */
 export function resolveColor(a: ArgVal | undefined, states: IRState[]): string | undefined {
   if (!a) return undefined
-  if (a.t === 'raw') { const v = evalExpr(a.v, states); return v ? color(v) : undefined }
+  if (a.t === 'raw') {
+    const rc = resourceColor(a); if (rc) return rc
+    const v = evalExpr(a.v, states); return v ? color(v) : undefined
+  }
   return color(a)
 }
 

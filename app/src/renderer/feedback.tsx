@@ -109,3 +109,16 @@ export function RatingView({ node, path, ctx }: ViewProps) {
     </div>
   )
 }
+
+/** LoadingProgress()：旋转菊花（.color 可覆盖） */
+export function LoadingProgressView({ node, path, ctx }: ViewProps) {
+  const f = frameOf(node, path, ctx)
+  const c = resolveColor(getModifier(node, 'color')?.args[0], ctx.states) ?? '#3b82f6'
+  return (
+    <div {...f.common} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', ...f.style }}>
+      <span className="ir-loading" style={{ color: c }} />
+      {f.indicator}
+      {f.handles}
+    </div>
+  )
+}

@@ -18,6 +18,9 @@ export interface IRNode {
   children: IRNode[]
   modifiers: Modifier[]
   unsupported?: boolean
+  /** 源码字符偏移（build/组件体内盖戳），供大纲树点击跳转代码用；非 build 体内节点无此字段 */
+  pos?: number
+  end?: number
 }
 
 export interface IRState {
