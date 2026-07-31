@@ -21,7 +21,8 @@ body { background: #f0f2f5; color: #1f2329; }
 .topbar .err { color: #d92d20; font-size: 12px; }
 .topbar .warn { color: #b54708; font-size: 12px; cursor: help; white-space: pre-line; }
 
-.content { flex: 1; display: flex; min-height: 0; }
+.content { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.content-mid { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .canvas-pane {
   flex: 1; display: flex; align-items: flex-start; justify-content: center;
   padding: 24px; overflow: auto; background: #f0f2f5;
@@ -57,15 +58,10 @@ body { background: #f0f2f5; color: #1f2329; }
 .fold-toggle button.active { background: #3a6df0; border-color: #3a6df0; color: #fff; }
 
 .code-pane {
-  flex: 1 1 auto; min-height: 220px; display: flex; flex-direction: column;
-  border-left: 1px solid #e0e3e8; background: #ffffff;
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; background: #ffffff;
 }
 .code-pane textarea {
   flex: 1; resize: none; border: 0; outline: 0; padding: 12px;
   background: transparent; color: #24292f; font-family: "Cascadia Code", "Consolas", monospace;
   font-size: 12.5px; line-height: 1.5; tab-size: 2;
-}
-.code-pane .label {
-  padding: 6px 12px; font-size: 11px; color: #667085;
-  border-bottom: 1px solid #e0e3e8; text-transform: uppercase; letter-spacing: 0.5px;
 }

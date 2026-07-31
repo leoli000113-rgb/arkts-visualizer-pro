@@ -410,3 +410,14 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - **Stack 空层修复（顺手修的真 bug）**：折叠 If/注释等渲染为 null 的子节点原先仍产出 inset:0 绝放层，整屏拦截点击（ReadingPage 这类「Stack + 隐藏 overlay」结构在编辑模式下也无法选中内容）。现 null 子节点不产层，且绝放层 pointer-events 穿透、内容层恢复。
 - **UI**：侧栏第四页签「页面」（文件列表 @Entry 标 ⌂ + 媒体缩略图可移除）；画布右上页面栏（◀ 返回 + 当前页名 + 交互预览徽标）；顶栏 导入项目/导入媒体/交互预览 开关；单文件导入走 `loadSingleFile` 退出项目模式。
 - 测试 147/147 绿，typecheck/lint/build 全绿；真实 NovelReader 工程（4 页面 + 2 组件）走通「导入 → BookShelf → navigateTo ReadingPage → 交互点 ‹ 返回 BookShelf」全链路，Playwright 截图验证媒体/字符串资源渲染。
+
+## 21. 停靠式面板布局 + 大纲树编辑中枢 + 拖拽健壮性（2026-07-31）
+
+针对「面板宽高想拖拽调整、想自定义停靠边」「拖拽复合组件有概率蓝屏」「Scroll 里拖不进 Text」「大纲树应是核心编辑入口」四个反馈：
+
+- **停靠布局（`panels/dock.tsx`）**：四个面板（导航/大纲树/属性/代码）可停靠屏幕四边。store 新增 `layoutDocks/panelSize/zoneSize`（均持久化）：左/右区竖向堆叠、面板把手调高度、区内缘把手调区宽；上/下区横向并排、把手调宽度、区缘调区高。面板首部右键弹菜单选停靠边（复用 ctx-menu 样式），含「重置全部布局」。0 = flex 均分，拖过把手转 px 固定。
+- **拖拽「蓝屏」根治**：上轮已补 pointercancel/blur/Esc 收尾，但「窗外松开鼠标再移回」路径仍残留——pointerup 在窗外不触发，拖拽态与蓝色落点层卡死。本轮双保险：① onMove 检测 `e.buttons === 0`（按钮已弹起却还在拖 = 错过了 pointerup）立即 endDrag；② onMove/onUp 整体 try/catch，任何异常（序列化/约束/渲染）都保证收尾。beginMaybeMove 增加 `e.button !== 0` 过滤（右键滑动不再误起拖拽）。面板尺寸拖拽（startAxisDrag）同样带 buttons 兜底。
+- **独子容器落点重定向**：拖 Text 到 Scroll（独子已满）行中部，原先约束拒绝（null 落点，用户体感「拖不进去」）；现 `descendFullSingleChild` 自动下钻到内层 Column（computeDrop 拖拽与大纲树「＋」共用），落点高亮跟随最终目标行。
+- **大纲树成为编辑中枢**：行悬停出 ＋（容器→内部末尾/叶子→下方，弹插入选择器）/ ⧉副本 / ✕删除；插入选择器按目标容器的子类型+独子约束过滤，列出基础组件（registry 分组）与复合组件（分类），点选即插并自动选中。底部常驻操作提示条。
+- **组件库扩充分类**：9 → 22 个复合组件，分 6 类（导航/列表/卡片/表单/反馈/媒体），组件库面板按分类分组展示。新增 `library.test.tsx`：每个复合组件走「makeNode → serialize → parse → SSR 渲染」全链路断言不抛错（防「拖入即崩」回归），并断言只用已注册组件类型。
+- 测试 177/177 绿（+30：dnd 重定向 7 + 组件库全链路 23），typecheck/lint/build 全绿；Playwright 实测：区宽/面板高拖拽、大纲树停靠底部、插入选择器、复合组件拖入无 ghost/落点层残留、重置布局。

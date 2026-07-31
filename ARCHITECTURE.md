@@ -92,11 +92,12 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 
 ## 5. 编辑能力清单
 
-- 拖放：面板 → 画布/大纲树（before/inside/after 三态落点）；同父/跨容器搬运；Stack 内按坐标自由摆放（`.position`）；拖拽中有跟手标签（ghost）。
+- 拖放：面板 → 画布/大纲树（before/inside/after 三态落点）；同父/跨容器搬运；Stack 内按坐标自由摆放（`.position`）；拖拽中有跟手标签（ghost）。**独子容器重定向**：落到已满的 Scroll/TabContent/Badge 中部自动深入其内层容器（`descendFullSingleChild`，高亮跟随最终目标）。**健壮性**：onMove 检测 `e.buttons === 0` 兜底错过的 pointerup（窗外松开不再卡死落点层），onMove/onUp 全 try/catch 收尾，右键按下不起拖拽。
 - **Alt + 拖拽** = 任意组件自由偏移（`.offset`，不改结构）；右/下/右下三个把手改宽/高/同时改。
 - **对齐吸附**：Alt 偏移与 Stack 落点时，±3vp 内自动吸附兄弟/容器的边缘与中线，并绘制玫红参考线。
-- 大纲树：点击选中（双向联动）、容器节点 ▸/▾ 收合、树内拖放重排/换父。
+- 大纲树（编辑中枢）：点击选中（双向联动）、容器 ▸/▾ 收合、树内拖放重排/换父；**行悬停操作：＋插入（容器进内部末尾、叶子到下方，弹约束过滤的插入选择器：基础组件 + 复合组件）/ ⧉副本 / ✕删除**。
 - 右键菜单：选中父级/上移下移/创建副本/包裹进容器/复制节点代码/删除。
+- **停靠式面板布局**：导航/大纲树/属性/代码四面板可停靠屏幕四边（首部右键菜单切换 + 重置布局）；面板主尺寸把手（左/右区调高、上/下区调宽）+ 区内缘把手调整区尺寸；`layoutDocks/panelSize/zoneSize` 持久化，0 = flex 均分。
 - 属性面板：**专属区由 registry 的 FieldSpec schema 驱动** + 全量通用属性（布局+外观）+ 感叹号中文说明 + 「全部修饰符」兜底（可增删任意修饰符）。
 - 撤销/重做（Ctrl+Z/Y，50 步；连续手势合并为一步）、Delete 删除。
 - 节点剪贴簿：Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+V 粘贴（选中容器可接收则放入其内，否则落到选中节点之后；粘贴同样过子类型/独子约束）/ Ctrl+D 创建副本。
@@ -108,7 +109,7 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 - 代码窗：**CodeMirror 6**（TS 高亮/行号/括号匹配），输入防抖 400ms 解析（失焦立即 flush）；**解析失败保留最后一次成功的 IR**——画布不闪白，错误在代码窗顶部红色横幅 + 编辑器内 lint 标记（gutter 红点，位置由 parser 报错文本提取）展示。
 - 顶栏：复制代码、导出 .ets、设备切换/折叠态、设备档案编辑/新增、编译风险警示、快捷键说明弹窗（?）。
 
-## 6. 测试策略（147 项，防退化锚点）
+## 6. 测试策略（177 项，防退化锚点）
 
 ```
 parser.test.ts      v1 子集 + sample_full 全景：往返幂等、If/ForEach/raw
@@ -118,6 +119,10 @@ builder.test.ts     @Builder 结构化、镜像、编辑写回定义、幂等
 validate.test.ts    编译约束校验（Scroll 独子等，对齐 hvigor 报错）
 store.test.ts       撤销重做/手势合并/右键菜单动作/剪贴簿/模板历史/22 种默认值往返
 registry.test.ts    registry 完整性：SUPPORTED 全覆盖/面板分组/默认节点往返/约束派生
+dnd.test.ts         落点计算：独子容器重定向（Scroll→内层 Column）/前后插入/
+                    约束拦截/move 搬运重定向
+library.test.tsx    22 个复合组件全链路：makeNode → serialize → parse → SSR 渲染
+                    不抛错 + 只用已注册组件类型（防「拖入即崩」回归）
 project.test.tsx    import 提取/路径与路由解析/媒体与资源分类/跨文件组件表/
                     router 动作提取/resolveMediaRef/Image+字符串资源 SSR
 projectStore.test.ts 整项目导入/导航栈/跨文件组件表/换页写回/单文件退出项目模式
@@ -158,13 +163,14 @@ app/src/
 ├─ renderer/   shared（styleOf/color/frameOf/evalExpr 求值器/router 动作提取）+ Renderer
 │              + containers/forms/feedback/flow + RelativeContainer（约束求解引擎）
 │              + styleTable（@Styles 提取）+ components（同文件组件提取）+ resize
-├─ editor/     dnd（落点/Alt 偏移/Stack 定位/吸附参考线/拖拽 ghost）+ OutlineTree
+├─ editor/     dnd（落点/独子重定向/Alt 偏移/Stack 定位/吸附参考线/ghost/兜底收尾）
+│              + OutlineTree（行内 ＋/⧉/✕ + 插入选择器）+ dnd 测试
 │              + PropertyPanel（schema 驱动）+ DeviceEditor + ContextMenu + ErrorBoundary
 ├─ panels/     TopBar + SidePanel（页面/组件/组件库/模板+搜索）+ ZoomBar + CodePane
-│              （CodeMirror）+ HelpModal + TemplateThumb
+│              （CodeMirror）+ HelpModal + TemplateThumb + dock（四边停靠布局）
 ├─ devices/    devices.json（官网校准）+ 覆盖层
 └─ store/      Zustand store（IR/历史/持久化/设备版本/缩放/剪贴簿/样式表/组件表
-│              + 项目文件表/媒体/资源/导航栈/交互预览/自适应模式）
+│              + 项目文件表/媒体/资源/导航栈/交互预览/自适应模式/停靠布局）
 ```
 
 ## 9. 常用命令

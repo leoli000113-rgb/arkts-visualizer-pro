@@ -1,16 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
-import { useStore, initStore } from './store/store'
+import { useStore, initStore, PanelId } from './store/store'
 import { getViewport } from './devices/devices'
 import { renderNode } from './renderer/Renderer'
 import { PropertyPanel } from './editor/PropertyPanel'
 import { ContextMenu } from './editor/ContextMenu'
+import { OutlineTree } from './editor/OutlineTree'
 import { TopBar } from './panels/TopBar'
 import { SidePanel } from './panels/SidePanel'
 import { ZoomBar } from './panels/ZoomBar'
 import { CodePane } from './panels/CodePane'
 import { HelpModal } from './panels/HelpModal'
+import { DockZone, DockMenu } from './panels/dock'
 import { ErrorBoundary } from './editor/ErrorBoundary'
 import './App.css'
+
+/** 停靠面板内容路由：面板 id → 内容组件 */
+function renderPanel(p: PanelId): React.ReactNode {
+  switch (p) {
+    case 'nav': return <SidePanel />
+    case 'outline': return <OutlineTree />
+    case 'props': return <PropertyPanel />
+    case 'code': return <CodePane />
+  }
+}
 
 function useEditorShortcuts() {
   useEffect(() => {
@@ -97,37 +109,36 @@ export default function App() {
       <TopBar onOpenHelp={() => setHelpOpen(true)} />
       <ErrorBoundary>
         <div className="content">
-          <SidePanel />
-          <div className="canvas-pane" ref={paneRef}>
-            <ZoomBar effZoom={effZoom} />
-            {(currentFile || navDepth > 0) && (
-              <div className="page-bar">
-                {navDepth > 0 && (
-                  <button className="page-back" onClick={navigateBack} title="模拟 router.back()">◀ 返回</button>
-                )}
-                <span className="page-name" title={currentFile ?? undefined}>{ir?.structName ?? currentFile}</span>
-                {interactive && <span className="page-live">交互预览</span>}
-              </div>
-            )}
-            <div className="zoom-stage" style={{ width: (vp.w_css + 20) * effZoom, height: (vp.h_css + 20) * effZoom }}>
-              <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${effZoom})`, transformOrigin: 'top left' }}>
-                <div className={`phone-screen${interactive ? ' interactive' : ''}`} style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => setSelected(null)}>
-                  {ir ? renderNode(ir.root, [], selectedPath, setSelected, dropTarget) : <div style={{ padding: 16, color: '#888' }}>{error ? '解析失败，见右侧代码窗' : '正在解析…'}</div>}
+          <DockZone side="top" renderPanel={renderPanel} />
+          <div className="content-mid">
+            <DockZone side="left" renderPanel={renderPanel} />
+            <div className="canvas-pane" ref={paneRef}>
+              <ZoomBar effZoom={effZoom} />
+              {(currentFile || navDepth > 0) && (
+                <div className="page-bar">
+                  {navDepth > 0 && (
+                    <button className="page-back" onClick={navigateBack} title="模拟 router.back()">◀ 返回</button>
+                  )}
+                  <span className="page-name" title={currentFile ?? undefined}>{ir?.structName ?? currentFile}</span>
+                  {interactive && <span className="page-live">交互预览</span>}
+                </div>
+              )}
+              <div className="zoom-stage" style={{ width: (vp.w_css + 20) * effZoom, height: (vp.h_css + 20) * effZoom }}>
+                <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${effZoom})`, transformOrigin: 'top left' }}>
+                  <div className={`phone-screen${interactive ? ' interactive' : ''}`} style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => setSelected(null)}>
+                    {ir ? renderNode(ir.root, [], selectedPath, setSelected, dropTarget) : <div style={{ padding: 16, color: '#888' }}>{error ? '解析失败，见右侧代码窗' : '正在解析…'}</div>}
+                  </div>
                 </div>
               </div>
             </div>
+            <DockZone side="right" renderPanel={renderPanel} />
           </div>
-          <div className="right-col">
-            <div className="prop-panel">
-              <div className="label">属性</div>
-              <PropertyPanel />
-            </div>
-            <CodePane />
-          </div>
+          <DockZone side="bottom" renderPanel={renderPanel} />
         </div>
       </ErrorBoundary>
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       <ContextMenu />
+      <DockMenu />
     </div>
   )
 }

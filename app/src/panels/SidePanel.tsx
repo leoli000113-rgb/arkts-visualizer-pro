@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { useStore } from '../store/store'
 import { startNewDrag, startNewDragNode } from '../editor/dnd'
-import { OutlineTree } from '../editor/OutlineTree'
 import { PALETTE_GROUPS } from '../registry'
 import { TEMPLATE_CATEGORIES } from '../templates/templates'
-import { LIBRARY } from '../library/components'
+import { LIBRARY, LIBRARY_CATEGORIES } from '../library/components'
 import { TemplateThumb } from './TemplateThumb'
 
 type SideTab = 'pages' | 'palette' | 'library' | 'templates'
@@ -104,26 +103,36 @@ function Palette({ query }: { query: string }) {
 
 function LibraryPanel({ query }: { query: string }) {
   const q = query.trim().toLowerCase()
-  const items = LIBRARY.filter((c) => c.name.toLowerCase().includes(q))
+  // 分类命中保留整组，否则按组件名过滤
+  const groups = LIBRARY_CATEGORIES
+    .map((cat) => ({
+      label: cat,
+      items: cat.toLowerCase().includes(q)
+        ? LIBRARY.filter((c) => c.category === cat)
+        : LIBRARY.filter((c) => c.category === cat && c.name.toLowerCase().includes(q)),
+    }))
+    .filter((g) => g.items.length > 0)
   return (
     <div className="palette">
       <div className="palette-scroll">
-        <div className="palette-group">
-          <div className="palette-group-label">复合组件</div>
-          <div className="palette-items library-items">
-            {items.length === 0 && <div className="palette-empty">无匹配组件</div>}
-            {items.map((c) => (
-              <div key={c.name} className="palette-item library-item"
-                onPointerDown={(e) => { e.preventDefault(); startNewDragNode(c.makeNode()) }}
-              >
-                <span className="lib-icon">{c.icon}</span>
-                <span>{c.name}</span>
-              </div>
-            ))}
+        {groups.length === 0 && <div className="palette-empty">无匹配组件</div>}
+        {groups.map((g) => (
+          <div key={g.label} className="palette-group">
+            <div className="palette-group-label">{g.label} ({g.items.length})</div>
+            <div className="palette-items library-items">
+              {g.items.map((c) => (
+                <div key={c.name} className="palette-item library-item"
+                  onPointerDown={(e) => { e.preventDefault(); startNewDragNode(c.makeNode()) }}
+                >
+                  <span className="lib-icon">{c.icon}</span>
+                  <span>{c.name}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        ))}
       </div>
-      <div className="palette-hint">复合组件 = 多个基础组件的组合，拖入即生成一组 UI</div>
+      <div className="palette-hint">复合组件 = 多个基础组件的组合，拖入画布/大纲树即生成一组 UI</div>
     </div>
   )
 }
@@ -166,12 +175,12 @@ function TemplatePanel({ query }: { query: string }) {
   )
 }
 
-/** 左侧栏：页签（页面/组件/组件库/模板）+ 搜索 + 大纲树 */
+/** 导航面板：页签（页面/组件/组件库/模板）+ 搜索（大纲树为独立停靠面板，见 OutlineTree） */
 export function SidePanel() {
   const [sideTab, setSideTab] = useState<SideTab>('palette')
   const [sideQuery, setSideQuery] = useState('')
   return (
-    <div className="side-col">
+    <div className="nav-panel">
       <div className="side-tabs">
         <button className={sideTab === 'pages' ? 'active' : ''} onClick={() => setSideTab('pages')}>页面</button>
         <button className={sideTab === 'palette' ? 'active' : ''} onClick={() => setSideTab('palette')}>组件</button>
@@ -185,10 +194,6 @@ export function SidePanel() {
       {sideTab === 'palette' && <Palette query={sideQuery} />}
       {sideTab === 'library' && <LibraryPanel query={sideQuery} />}
       {sideTab === 'templates' && <TemplatePanel query={sideQuery} />}
-      <div className="outline-panel">
-        <div className="label">大纲树</div>
-        <OutlineTree />
-      </div>
     </div>
   )
 }

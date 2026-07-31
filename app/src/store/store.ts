@@ -14,6 +14,16 @@ import type { DropTarget } from '../editor/dnd'
 
 const HISTORY_CAP = 50
 
+/** 可停靠面板与停靠边：面板可停靠到屏幕四边，主尺寸可拖拽调整 */
+export type DockSide = 'left' | 'right' | 'top' | 'bottom'
+export type PanelId = 'nav' | 'outline' | 'props' | 'code'
+
+const DEFAULT_DOCKS: Record<PanelId, DockSide> = { nav: 'left', outline: 'left', props: 'right', code: 'right' }
+/** 停靠区尺寸 px：左/右 = 区宽，上/下 = 区高 */
+const DEFAULT_ZONE: Record<DockSide, number> = { left: 240, right: 460, top: 240, bottom: 260 }
+/** 面板主尺寸 px：停靠左/右时 = 面板高度，停靠上/下时 = 面板宽度；0 = 与同窗面板 flex 均分 */
+const DEFAULT_PANEL_SIZE: Record<PanelId, number> = { nav: 0, outline: 0, props: 0, code: 0 }
+
 /** localStorage 安全包装：媒体 dataURL 撑爆配额时静默失败（内存态不受影响，刷新后重导即可） */
 const safeStorage = {
   getItem: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
@@ -63,6 +73,20 @@ interface StoreState {
   interactive: boolean
   /** 自适应窗口：画布缩放自动适配可用空间（手动缩放时自动关闭） */
   fitMode: boolean
+  /** 面板停靠边（面板首部右键切换） */
+  layoutDocks: Record<PanelId, DockSide>
+  /** 面板主尺寸 px：左/右停靠 = 高度，上/下停靠 = 宽度；0 = flex 均分 */
+  panelSize: Record<PanelId, number>
+  /** 停靠区尺寸 px：左/右 = 区宽，上/下 = 区高（区缘把手拖拽） */
+  zoneSize: Record<DockSide, number>
+  setPanelDock: (p: PanelId, d: DockSide) => void
+  setPanelSize: (p: PanelId, px: number) => void
+  setZoneSize: (d: DockSide, px: number) => void
+  resetLayout: () => void
+  /** 面板首部右键菜单（选停靠边）；null = 关闭 */
+  dockMenu: { x: number; y: number; panel: PanelId } | null
+  openDockMenu: (x: number, y: number, panel: PanelId) => void
+  closeDockMenu: () => void
   /** 当前文件方法名 → router 动作表（随 setCode 派生，onClick 间接导航解析用） */
   methodRoutes: Record<string, RouteAction>
   setInteractive: (v: boolean) => void
@@ -145,6 +169,20 @@ export const useStore = create<StoreState>()(
         navStack: [],
         interactive: false,
         fitMode: true,
+        layoutDocks: { ...DEFAULT_DOCKS },
+        panelSize: { ...DEFAULT_PANEL_SIZE },
+        zoneSize: { ...DEFAULT_ZONE },
+        setPanelDock: (p, d) => set({ layoutDocks: { ...get().layoutDocks, [p]: d } }),
+        setPanelSize: (p, px) => set({ panelSize: { ...get().panelSize, [p]: Math.round(px) } }),
+        setZoneSize: (d, px) => set({ zoneSize: { ...get().zoneSize, [d]: Math.round(px) } }),
+        resetLayout: () => set({
+          layoutDocks: { ...DEFAULT_DOCKS },
+          panelSize: { ...DEFAULT_PANEL_SIZE },
+          zoneSize: { ...DEFAULT_ZONE },
+        }),
+        dockMenu: null,
+        openDockMenu: (x, y, panel) => set({ dockMenu: { x, y, panel } }),
+        closeDockMenu: () => set({ dockMenu: null }),
         methodRoutes: {},
         setInteractive: (v) => set({ interactive: v }),
         setFitMode: (v) => set({ fitMode: v }),
@@ -384,6 +422,7 @@ export const useStore = create<StoreState>()(
         files: s.files, currentFile: s.currentFile, media: s.media,
         resColors: s.resColors, resStrings: s.resStrings,
         navStack: s.navStack, interactive: s.interactive, fitMode: s.fitMode,
+        layoutDocks: s.layoutDocks, panelSize: s.panelSize, zoneSize: s.zoneSize,
       }),
     },
   ),

@@ -91,7 +91,6 @@ export function CodePane() {
 
   return (
     <div className="code-pane">
-      <div className="label">代码</div>
       {error && <div className="code-err">⚠ 解析失败：{error}</div>}
       <CodeMirror
         value={text}

@@ -34,6 +34,7 @@ let bound = false
 let ghost: HTMLDivElement | null = null
 function showGhost(label: string) {
   hideGhost()
+  if (typeof document === 'undefined') return // SSR/测试环境无 DOM
   ghost = document.createElement('div')
   ghost.className = 'drag-ghost'
   ghost.textContent = label
@@ -119,7 +120,7 @@ function snapEdges(start: number, size: number, candidates: number[], thr: numbe
 }
 
 function attach() {
-  if (bound) return
+  if (bound || typeof window === 'undefined') return // SSR/测试环境无 window
   bound = true
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
@@ -129,6 +130,7 @@ function attach() {
   window.addEventListener('keydown', onEsc)
 }
 function detach() {
+  if (typeof window === 'undefined') { bound = false; return }
   bound = false
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
@@ -201,12 +203,14 @@ function detachPending() {
 
 export function beginMaybeMove(path: Path, e: React.PointerEvent) {
   e.stopPropagation()
+  if (e.button !== 0) return // 仅左键可拖：右键按下留给上下文菜单，避免右键滑动误起拖拽
   pending = { path, x: e.clientX, y: e.clientY }
   attachPending()
 }
 
 function onMaybeMove(e: PointerEvent) {
   if (!pending) return
+  if (e.buttons === 0) { pending = null; detachPending(); return } // 错过了 pointerup → 取消预备拖拽
   const dx = e.clientX - pending.x
   const dy = e.clientY - pending.y
   if (dx * dx + dy * dy < 25) return
@@ -225,7 +229,7 @@ function onMaybeUp() {
 }
 
 /** 计算落点（画布与大纲树共用）：bands 判定 before/inside/after 并做约束校验；snap 仅画布开启（Stack 指针吸附） */
-function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clientX: number, clientY: number, snap: boolean): DropTarget | null {
+export function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clientX: number, clientY: number, snap: boolean): DropTarget | null {
   const node = getNodeAtPath(root, path)
   if (!node) return null
   const parentPath = path.slice(0, -1)
@@ -235,42 +239,69 @@ function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clie
   if (path.length === 0) pos = 'inside'
   else if (CONTAINERS.has(node.type)) pos = ratio < band ? 'before' : ratio > 1 - band ? 'after' : 'inside'
   else pos = ratio < 0.5 ? 'before' : 'after'
-  const parent_ = pos === 'inside' ? path : parentPath
+  let targetPath = pos === 'inside' ? path : parentPath
   const last = path.length ? path[path.length - 1] : 0
-  const idx = pos === 'inside' ? node.children.length : pos === 'before' ? last : last + 1
+  let idx = pos === 'inside' ? node.children.length : pos === 'before' ? last : last + 1
+  let containerNode = pos === 'inside' ? node : parent
+  // 独子容器（Scroll/TabContent/Badge）已有独子且独子是容器 → 自动深入该子容器：
+  // 拖 Text 到 Scroll 行中部 = 放进它内层的 Column，符合「Scroll 里装东西」的直觉
+  if (pos === 'inside') {
+    const d = descendFullSingleChild(node, path)
+    containerNode = d.node
+    targetPath = d.path
+    idx = containerNode.children.length
+  }
   // 子类型约束 + 独子约束（同父搬运不增加子数，跳过独子检查）
-  const containerNode = pos === 'inside' ? node : parent
   if (containerNode) {
     const childType = draggedType(root)
     if (childType && !acceptsChild(containerNode.type, childType)) return null
-    const sameParentMove = ctx?.kind === 'move' && !!ctx.path && samePath(ctx.path.slice(0, -1), parent_)
+    const sameParentMove = ctx?.kind === 'move' && !!ctx.path && samePath(ctx.path.slice(0, -1), targetPath)
     if (!sameParentMove && !canAcceptMore(containerNode)) return null
   }
   // Stack 自由定位：inside 落点记录指针坐标（vp），落下时写入子节点 .position({x,y})
   let at: { x: number; y: number } | undefined
-  if (pos === 'inside' && node.type === 'Stack') {
-    const k = pxPerVp()
-    let px = clientX
-    let py = clientY
-    if (snap) {
-      // 指针吸附到兄弟/容器的边缘与中线（±SNAP_VP），并绘制参考线
-      const sibBoxes = node.children
-        .map((_, i) => elOf([...path, i]))
-        .filter((el): el is HTMLElement => !!el)
-        .map(el => el.getBoundingClientRect())
-      const cand = candidateLines(box, sibBoxes)
-      const sx = snapVal(clientX, cand.vx, SNAP_PX())
-      const sy = snapVal(clientY, cand.hy, SNAP_PX())
-      if (sx.line !== undefined || sy.line !== undefined) drawGuides(box, sx.line, sy.line)
-      px = sx.v
-      py = sy.v
+  if (pos === 'inside' && containerNode?.type === 'Stack') {
+    // 重定向后目标可能不是原行：取最终目标的屏幕矩形计算坐标
+    const tbox = samePath(targetPath, path) ? box : elOf(targetPath)?.getBoundingClientRect()
+    if (tbox) {
+      const k = pxPerVp()
+      let px = clientX
+      let py = clientY
+      if (snap) {
+        // 指针吸附到兄弟/容器的边缘与中线（±SNAP_VP），并绘制参考线
+        const sibBoxes = containerNode.children
+          .map((_, i) => elOf([...targetPath, i]))
+          .filter((el): el is HTMLElement => !!el)
+          .map(el => el.getBoundingClientRect())
+        const cand = candidateLines(tbox, sibBoxes)
+        const sx = snapVal(clientX, cand.vx, SNAP_PX())
+        const sy = snapVal(clientY, cand.hy, SNAP_PX())
+        if (sx.line !== undefined || sy.line !== undefined) drawGuides(tbox, sx.line, sy.line)
+        px = sx.v
+        py = sy.v
+      }
+      at = { x: Math.round((px - tbox.left) / k), y: Math.round((py - tbox.top) / k) }
     }
-    at = { x: Math.round((px - box.left) / k), y: Math.round((py - box.top) / k) }
   }
-  return { path, pos, parent: parent_, index: idx, at }
+  // 落点高亮跟随最终目标：重定向进内层容器时，高亮内层行而非 Scroll 行
+  return { path: pos === 'inside' ? targetPath : path, pos, parent: targetPath, index: idx, at }
 }
 
 function onMove(e: PointerEvent) {
+  if (!ctx) return
+  // 兜底：错过了 pointerup（窗外松开/系统吞事件等）→ 按钮已弹起却仍在拖拽态，
+  // 直接收尾。这是「蓝色落点层卡满屏（蓝屏）」的主要残留路径。
+  if (e.buttons === 0) { endDrag(); return }
+  try {
+    onMoveInner(e)
+  } catch (err) {
+    // 拖拽中任何异常都必须收尾：否则 ctx/ghost/落点指示残留 = 蓝屏卡死
+    console.error('[dnd] onMove', err)
+    endDrag()
+  }
+}
+
+function onMoveInner(e: PointerEvent) {
   if (!ctx) return
   moveGhost(e.clientX, e.clientY)
   clearGuides()
@@ -340,7 +371,13 @@ function onMove(e: PointerEvent) {
 
 function onUp() {
   if (!ctx) { detach(); return }
-  performDrop()
+  try {
+    performDrop()
+  } catch (err) {
+    // 落下失败（序列化/约束等异常）也必须收尾，避免拖拽态卡死
+    console.error('[dnd] performDrop', err)
+    endDrag()
+  }
 }
 
 function isMoveValid(from: Path, toParent: Path): boolean {
@@ -349,9 +386,22 @@ function isMoveValid(from: Path, toParent: Path): boolean {
   return true
 }
 
+/**
+ * 独子容器（Scroll/TabContent/Badge）已满且独子是容器时下钻到最内层容器：
+ * 拖拽落点重定向（computeDrop）与大纲树「＋」插入共用。
+ */
+export function descendFullSingleChild(node: IRNode, path: Path): { node: IRNode; path: Path } {
+  let cur = node
+  let p = path
+  while (!canAcceptMore(cur) && cur.children.length === 1 && CONTAINERS.has(cur.children[0].type)) {
+    cur = cur.children[0]
+    p = [...p, 0]
+  }
+  return { node: cur, path: p }
+}
+
 /** 当前拖拽载荷的组件类型（新增=面板类型；搬运=被拖节点类型） */
-function draggedType(root: IRNode): string | null {
-  if (!ctx) return null
+function draggedType(root: IRNode): string | null {  if (!ctx) return null
   if (ctx.kind === 'new') {
     if (ctx.node) return ctx.node.type
     return ctx.type ?? null
