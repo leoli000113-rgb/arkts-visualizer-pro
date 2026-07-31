@@ -61,12 +61,36 @@ export default function App() {
   const { ir, error, deviceModel, fold, selectedPath, dropTarget, setSelected } = useStore()
   const [helpOpen, setHelpOpen] = useState(false)
   const paneRef = useRef<HTMLDivElement>(null)
+  const [fit, setFit] = useState(1)
 
   useEffect(() => { initStore() }, [])
   useEditorShortcuts()
 
   const vp = getViewport(deviceModel, fold)
   const zoom = useStore(s => s.zoom)
+  const fitMode = useStore(s => s.fitMode)
+  const interactive = useStore(s => s.interactive)
+  const currentFile = useStore(s => s.currentFile)
+  const navDepth = useStore(s => s.navStack.length)
+  const navigateBack = useStore(s => s.navigateBack)
+
+  // 自适应窗口：画布可用空间或设备视口变化时重算适配缩放（fitMode 开启时生效）
+  useEffect(() => {
+    const pane = paneRef.current
+    if (!pane) return
+    const update = () => {
+      setFit(Math.min(
+        (pane.clientWidth - 80) / (vp.w_css + 20),
+        (pane.clientHeight - 80) / (vp.h_css + 20),
+      ))
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(pane)
+    return () => ro.disconnect()
+  }, [vp.w_css, vp.h_css])
+
+  const effZoom = fitMode ? Math.min(2, Math.max(0.2, fit)) : zoom
 
   return (
     <div className="app">
@@ -75,10 +99,19 @@ export default function App() {
         <div className="content">
           <SidePanel />
           <div className="canvas-pane" ref={paneRef}>
-            <ZoomBar paneRef={paneRef} w_css={vp.w_css} h_css={vp.h_css} />
-            <div className="zoom-stage" style={{ width: (vp.w_css + 20) * zoom, height: (vp.h_css + 20) * zoom }}>
-              <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
-                <div className="phone-screen" style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => setSelected(null)}>
+            <ZoomBar effZoom={effZoom} />
+            {(currentFile || navDepth > 0) && (
+              <div className="page-bar">
+                {navDepth > 0 && (
+                  <button className="page-back" onClick={navigateBack} title="模拟 router.back()">◀ 返回</button>
+                )}
+                <span className="page-name" title={currentFile ?? undefined}>{ir?.structName ?? currentFile}</span>
+                {interactive && <span className="page-live">交互预览</span>}
+              </div>
+            )}
+            <div className="zoom-stage" style={{ width: (vp.w_css + 20) * effZoom, height: (vp.h_css + 20) * effZoom }}>
+              <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${effZoom})`, transformOrigin: 'top left' }}>
+                <div className={`phone-screen${interactive ? ' interactive' : ''}`} style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => setSelected(null)}>
                   {ir ? renderNode(ir.root, [], selectedPath, setSelected, dropTarget) : <div style={{ padding: 16, color: '#888' }}>{error ? '解析失败，见右侧代码窗' : '正在解析…'}</div>}
                 </div>
               </div>

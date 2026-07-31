@@ -1,6 +1,6 @@
 import React from 'react'
 import { getModifier, numModifier } from '../ir/mutate'
-import { ViewProps, frameOf, ctorObj, resolveNum, resolveColor, vp } from './shared'
+import { ViewProps, frameOf, ctorObj, resolveNum, resolveColor, resolveMediaRef, vp } from './shared'
 
 /**
  * 反馈组件组：Progress / Video。
@@ -41,10 +41,21 @@ export function ProgressView({ node, path, ctx }: ViewProps) {
   )
 }
 
-/** Video({ src })：占位框 + src 标注（沿用 Image 占位策略，深色底） */
+/** Video({ src })：src 可解析（导入媒体/URL）→ 真视频渲染；否则占位框 + src 标注（深色底） */
 export function VideoView({ node, path, ctx }: ViewProps) {
   const f = frameOf(node, path, ctx)
   const o = ctorObj(node)
+  const url = resolveMediaRef(o?.src ?? node.ctorArgs[0], ctx.res.media)
+  if (url) {
+    return (
+      <div {...f.common} style={{ display: 'flex', overflow: 'hidden', background: '#000', ...f.style }}>
+        <video src={url} controls muted playsInline preload="metadata"
+          style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+        {f.indicator}
+        {f.handles}
+      </div>
+    )
+  }
   const src = o?.src && o.src.t === 'str' ? o.src.v : ''
   return (
     <div {...f.common} style={{
@@ -66,7 +77,7 @@ export function DividerView({ node, path, ctx }: ViewProps) {
   const isV = !!(v && v.t === 'bool' && v.v)
   const sw = numModifier(node, 'strokeWidth')
   const thick = sw != null ? vp(sw) : 1
-  const col = resolveColor(getModifier(node, 'color')?.args[0], ctx.states) ?? '#E5E5E5'
+  const col = resolveColor(getModifier(node, 'color')?.args[0], ctx.states, ctx.res) ?? '#E5E5E5'
   return (
     <div {...f.common} style={{
       flexShrink: 0,
@@ -113,7 +124,7 @@ export function RatingView({ node, path, ctx }: ViewProps) {
 /** LoadingProgress()：旋转菊花（.color 可覆盖） */
 export function LoadingProgressView({ node, path, ctx }: ViewProps) {
   const f = frameOf(node, path, ctx)
-  const c = resolveColor(getModifier(node, 'color')?.args[0], ctx.states) ?? '#3b82f6'
+  const c = resolveColor(getModifier(node, 'color')?.args[0], ctx.states, ctx.res) ?? '#3b82f6'
   return (
     <div {...f.common} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', ...f.style }}>
       <span className="ir-loading" style={{ color: c }} />

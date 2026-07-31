@@ -81,10 +81,47 @@ const RESOURCE_COLORS: Record<string, string> = {
   bg_gradient_start: '#f0f4ff',
   bg_gradient_end: '#a78bfa',
 }
-export function resourceColor(a: ArgVal | undefined): string | undefined {
+
+/** 项目资源表：导入工程后由 store 注入 ctx（媒体 dataURL 表 / color.json / string.json） */
+export interface RenderRes {
+  media: Record<string, string>
+  colors: Record<string, string>
+  strings: Record<string, string>
+}
+export const EMPTY_RES: RenderRes = { media: {}, colors: {}, strings: {} }
+
+/** $r('app.color.<name>')：项目 color.json 优先，未命中回退内置语义色表 */
+export function resourceColor(a: ArgVal | undefined, projectColors?: Record<string, string>): string | undefined {
   if (!a || a.t !== 'raw') return undefined
   const m = a.v.match(/\$r\(\s*['"]app\.color\.([\w]+)['"]\s*\)/)
-  return m ? RESOURCE_COLORS[m[1]] : undefined
+  if (!m) return undefined
+  return projectColors?.[m[1]] ?? RESOURCE_COLORS[m[1]]
+}
+
+/** $r('app.string.<name>') → 项目 string.json 文案（未导入工程时无解） */
+export function resourceString(a: ArgVal | undefined, projectStrings?: Record<string, string>): string | undefined {
+  if (!a || a.t !== 'raw') return undefined
+  const m = a.v.match(/\$r\(\s*['"]app\.string\.([\w]+)['"]\s*\)/)
+  return m ? projectStrings?.[m[1]] : undefined
+}
+
+/**
+ * 媒体引用解析：http(s)/data/blob 直出；$r('app.media.x') / $rawfile('dir/x.png') /
+ * 相对路径字符串 → 导入媒体表（按「文件名去扩展名」键）。求不出返回 undefined（走占位）。
+ */
+export function resolveMediaRef(a: ArgVal | undefined, media: Record<string, string> = {}): string | undefined {
+  if (!a) return undefined
+  const raw = a.t === 'raw' ? a.v.trim() : a.t === 'str' ? a.v : undefined
+  if (!raw) return undefined
+  if (/^(https?:|data:|blob:)/.test(raw)) return raw
+  const r = raw.match(/\$r\(\s*['"]app\.media\.([\w]+)['"]\s*\)/)
+  if (r) return media[r[1]]
+  const rf = raw.match(/\$rawfile\(\s*['"]([^'"]+)['"]\s*\)/)
+  const path = rf ? rf[1] : raw
+  if (/\.(png|jpe?g|gif|webp|svg|bmp|ico|mp4|webm|mov|m4v|avi|mkv)$/i.test(path)) {
+    return media[path.split('/').pop()!.replace(/\.[^.]+$/, '')]
+  }
+  return undefined
 }
 export function box(a: ArgVal | undefined): string | undefined {
   if (!a) return undefined
@@ -163,7 +200,7 @@ export function stackAlign(a: ArgVal | undefined): Pick<CSSProperties, 'justifyC
   return { justifyContent, alignItems }
 }
 
-export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], styles: Record<string, Modifier[]> = {}, extendsTable: Record<string, Record<string, Modifier[]>> = {}): CSSProperties {
+export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], styles: Record<string, Modifier[]> = {}, extendsTable: Record<string, Record<string, Modifier[]>> = {}, res?: RenderRes): CSSProperties {
   const s: CSSProperties = {}
   const tf: string[] = [] // transform 合成（offset/translate/rotate/scale 共存）
   // @Styles/@Extend 展开：0 参数且命中样式表的修饰符调用，就地展开为其修饰符链
@@ -192,7 +229,7 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
   const colorE = (a: ArgVal | undefined): string | undefined => {
     if (!a) return undefined
     if (a.t === 'raw') {
-      const rc = resourceColor(a); if (rc) return rc
+      const rc = resourceColor(a, res?.colors); if (rc) return rc
       const v = evalExpr(a.v, states); return v ? color(v) : undefined
     }
     return color(a)
@@ -382,9 +419,13 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
         }
         break
       }
-      case 'backgroundImage':
-        if (a0 && a0.t === 'str' && !a0.v.startsWith('$')) s.backgroundImage = `url(${a0.v})`
+      case 'backgroundImage': {
+        // $r('app.media.x')/$rawfile/相对路径 → 导入媒体；普通 url 字符串直通
+        const url = resolveMediaRef(a0, res?.media)
+        if (url) s.backgroundImage = `url(${url})`
+        else if (a0 && a0.t === 'str' && !a0.v.startsWith('$')) s.backgroundImage = `url(${a0.v})`
         break
+      }
       case 'backgroundImageSize':
         if (a0 && a0.t === 'enum') {
           const v = a0.v.replace('ImageSize.', '')
@@ -417,11 +458,11 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
   return s
 }
 
-/** 求值感知颜色解析：raw 表达式经 evalExpr 小求值后再映射 */
-export function resolveColor(a: ArgVal | undefined, states: IRState[]): string | undefined {
+/** 求值感知颜色解析：raw 表达式经 evalExpr 小求值后再映射（项目色表优先于内置色表） */
+export function resolveColor(a: ArgVal | undefined, states: IRState[], res?: RenderRes): string | undefined {
   if (!a) return undefined
   if (a.t === 'raw') {
-    const rc = resourceColor(a); if (rc) return rc
+    const rc = resourceColor(a, res?.colors); if (rc) return rc
     const v = evalExpr(a.v, states); return v ? color(v) : undefined
   }
   return color(a)
@@ -435,12 +476,12 @@ export function firstStr(node: IRNode): string | undefined {
   const a = node.ctorArgs[0]
   return a && a.t === 'str' ? a.v : undefined
 }
-/** 首构造参数的求值感知版：raw 表达式（三元/拼接/this.x）经小求值取字符串 */
-export function firstStrE(node: IRNode, states: IRState[]): string | undefined {
+/** 首构造参数的求值感知版：raw 表达式（三元/拼接/this.x/$r 字符串资源）经小求值取字符串 */
+export function firstStrE(node: IRNode, states: IRState[], res?: RenderRes): string | undefined {
   const a = node.ctorArgs[0]
   if (!a) return undefined
   if (a.t === 'str') return a.v
-  return resolveStr(a, states)
+  return resolveStr(a, states, res)
 }
 
 export function eqPath(a: Path | null, b: Path): boolean {
@@ -488,6 +529,8 @@ export interface RenderEnv {
   builders?: Record<string, { params: string[]; children: IRNode[] }>
   /** 自定义组件嵌套渲染深度（递归引用保护，>3 回退占位卡） */
   depth?: number
+  /** 项目资源表（媒体/颜色/字符串）；缺省为空表 */
+  res?: RenderRes
 }
 
 export interface RenderCtx {
@@ -506,6 +549,8 @@ export interface RenderCtx {
   /** @Builder 定义表 */
   builders: Record<string, { params: string[]; children: IRNode[] }>
   depth: number
+  /** 项目资源表（媒体/颜色/字符串） */
+  res: RenderRes
   render: (c: IRNode, p: Path, noMargin?: boolean) => React.ReactNode
   /** 按 If/Else 配对规则渲染子节点序列（路径保持原始下标） */
   renderChildren: (n: IRNode, p: Path) => React.ReactNode[]
@@ -534,7 +579,20 @@ export interface Frame {
 /** 与现有 7 种组件完全一致的选中高亮 / 尺寸把手 / 落点指示框架 */
 export function frameOf(node: IRNode, path: Path, ctx: RenderCtx, noMargin = false): Frame {
   const sel = eqPath(ctx.selectedPath, path)
-  const onClick = (e: React.MouseEvent) => { e.stopPropagation(); ctx.onSelect(path) }
+  const onClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    // 交互预览模式：命中 router 导航（内联或 this.method 间接调用）时执行页面跳转，不做选中
+    const st = useStore.getState()
+    if (st.interactive) {
+      const act = routerActionOf(node, st.methodRoutes)
+      if (act) {
+        if (act.kind === 'back') st.navigateBack()
+        else if (act.url) st.navigateTo(act.url)
+        return
+      }
+    }
+    ctx.onSelect(path)
+  }
   const dropPos = ctx.dropTarget && eqPath(ctx.dropTarget.path, path) ? ctx.dropTarget.pos : null
   const common = {
     'data-path': keyOf(path),
@@ -551,7 +609,7 @@ export function frameOf(node: IRNode, path: Path, ctx: RenderCtx, noMargin = fal
   if (sel) { selStyle.outline = '2px solid #3a6df0'; selStyle.outlineOffset = '-2px' }
   const handles = sel ? handlesFor(node, path) : []
   const indicator = dropIndicator(dropPos)
-  const style = { ...styleOf(node, noMargin, ctx.states, ctx.styles, ctx.extends), ...selStyle }
+  const style = { ...styleOf(node, noMargin, ctx.states, ctx.styles, ctx.extends, ctx.res), ...selStyle }
   return { sel, dropPos, common, handles, indicator, style }
 }
 
@@ -983,7 +1041,7 @@ export function resolveNum(a: ArgVal | undefined, states: IRState[]): number | u
   return undefined
 }
 
-export function resolveStr(a: ArgVal | undefined, states: IRState[]): string | undefined {
+export function resolveStr(a: ArgVal | undefined, states: IRState[], res?: RenderRes): string | undefined {
   if (!a) return undefined
   if (a.t === 'str') return a.v
   if (a.t === 'enum') {
@@ -993,6 +1051,8 @@ export function resolveStr(a: ArgVal | undefined, states: IRState[]): string | u
     return st && st.init.t === 'str' ? st.init.v : undefined
   }
   if (a.t === 'raw') {
+    const rs = resourceString(a, res?.strings)
+    if (rs !== undefined) return rs
     const v = evalExpr(a.v, states)
     if (!v) return undefined
     if (v.t === 'str') return v.v
@@ -1045,4 +1105,58 @@ export function visibleChildren(children: IRNode[], states: IRState[]): { c: IRN
     out.push({ c, i })
   }
   return out
+}
+
+// ---------- 交互预览：router 导航动作提取 ----------
+
+export interface RouteAction { kind: 'push' | 'back'; url?: string }
+
+/** 在一段源码文本中找 router 导航调用（pushUrl/replaceUrl 优先于 back），找不到返回 null */
+export function findRouterAction(text: string): RouteAction | null {
+  const push = text.match(/router\.(?:pushUrl|replaceUrl)\s*\(\s*\{[\s\S]{0,400}?url\s*:\s*['"]([^'"]+)['"]/)
+  if (push) return { kind: 'push', url: push[1] }
+  if (/router\.back\s*\(/.test(text)) return { kind: 'back' }
+  return null
+}
+
+/** 从 openIdx（'{' 位置）截取配平的方法体（引号/注释不感知，启发式够用） */
+function balancedFrom(text: string, openIdx: number): string {
+  let depth = 0
+  for (let i = openIdx; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '{') depth++
+    else if (ch === '}') { depth--; if (depth === 0) return text.slice(0, i + 1) }
+  }
+  return text
+}
+
+/** 从 struct 成员的 raw 原文提取「方法名 → router 动作」表（onClick 间接调用的导航方法，如 this.open(id)） */
+export function extractMethodRoutes(ir: IRFile): Record<string, RouteAction> {
+  const out: Record<string, RouteAction> = {}
+  for (const m of ir.members) {
+    if (m.kind !== 'raw') continue
+    const re = /(?:^|\n)\s*(?:public\s+|private\s+|async\s+|static\s+)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::[^\n{]+)?\s*\{/g
+    let d: RegExpExecArray | null
+    while ((d = re.exec(m.text))) {
+      const act = findRouterAction(balancedFrom(m.text, d.index + d[0].length - 1))
+      if (act) out[d[1]] = act
+    }
+  }
+  return out
+}
+
+/** 节点 onClick 的导航动作：内联 router 调用优先，否则解析 this.method() 间接调用 */
+export function routerActionOf(node: IRNode, methodRoutes: Record<string, RouteAction> = {}): RouteAction | null {
+  const oc = node.modifiers.find(m => m.name === 'onClick')
+  if (!oc) return null
+  for (const a of oc.args) {
+    if (a.t !== 'raw') continue
+    const direct = findRouterAction(a.v)
+    if (direct) return direct
+    for (const c of a.v.matchAll(/this\.([A-Za-z_$][\w$]*)\s*\(/g)) {
+      const act = methodRoutes[c[1]]
+      if (act) return act
+    }
+  }
+  return null
 }

@@ -5,16 +5,21 @@
 ## 功能
 
 - 导入 `.ets` 文件 → 可视化预览 → 拖拽编辑 → 导出代码
+- **导入整个 ArkTS 工程目录**：递归读取全部 `.ets` 页面/组件、媒体资源、`resources element` 颜色/字符串 json
+- **跨页面**：页面列表切换；「交互预览」模式下点击带 `router.pushUrl/back` 的组件即模拟真机导航（含 `this.open()` 间接调用解析），◀ 返回按导航栈回退
+- **跨文件组件渲染**：`import { PageView } from '../components/PageView'` 解析进组件表，按真实内容渲染而非占位卡
+- **图片/视频真实渲染**：导入媒体后 `$r('app.media.x')` / `$rawfile` / 相对路径引用解析为真图/可播放视频；`$r` 颜色/字符串资源同样落地
+- **自适应屏幕**：画布缩放常开「适应窗口」模式（窗口/设备变化自动重算），手动 −/+ 即退出
 - 支持 30+ ArkUI 组件（Text/Button/Image/Row/Column/Stack/Grid/List/Tabs/TextInput/Toggle/Slider/Badge/Rating/Divider/Blank 等）
 - 三大面板：基础组件 / 复合组件库 / 页面模板（模板带即时缩图预览）
 - 28 个页面模板，分 7 大类（基础/首页/列表/表单/网格/个人中心/卡片）
 - 9 个复合组件（卡片/列表项/搜索栏/用户头部/按钮组等）
 - 设备适配（Mate 80 Pro Max / Mate X7 折叠屏 / Pura X Max 翻盖屏）
 - 撤销重做 / 节点剪贴簿（Ctrl+C/X/V/D）/ 大纲树（可收合）/ 属性面板 / 右键菜单
-- 画布缩放（−/+/适应窗口）/ 侧栏搜索 / 拖拽跟手标签 / Stack 对齐吸附参考线
+- 侧栏四页签（页面/组件/组件库/模板）+ 搜索 / 拖拽跟手标签 / Stack 对齐吸附参考线
 - CodeMirror 6 代码窗（语法高亮/行号/错误行内标记），防抖解析、报错不闪白
 - 组件注册表架构（registry）：新增组件只需一份声明，面板/约束/属性区/摘要自动派生
-- 纯前端，无后端，localStorage 持久化
+- 纯前端，无后端，localStorage 持久化（项目文件与媒体资源均落盘，配额满自动降级）
 
 ## 快速开始
 
@@ -39,6 +44,7 @@ app/src/
 ├── parser/       .ets → IR 解析器
 ├── ir/           IR 数据模型 / 序列化 / 校验（defaults/constraints 为 registry 转接层）
 ├── registry/     ★ 组件注册表：组件声明（分类/约束/默认节点/属性 schema/摘要）
+├── project/      ★ 项目级逻辑：import 提取/路径解析/路由解析/媒体与资源分类/解析缓存
 ├── renderer/     IR → React DOM 渲染器
 ├── editor/       拖拽（含吸附参考线）/ 大纲树 / 属性面板 / 右键菜单
 ├── panels/       顶栏 / 侧栏 / 缩放条 / CodeMirror 代码窗 / 帮助弹窗 / 模板缩图

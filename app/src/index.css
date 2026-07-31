@@ -32,6 +32,26 @@ body { background: #f0f2f5; color: #1f2329; }
   overflow: hidden; position: relative;
 }
 .phone-screen { position: relative; overflow: hidden; user-select: none; background: #fff; }
+.phone-screen.interactive, .phone-screen.interactive * { cursor: pointer; }
+
+/* 页面导航栏（项目模式/交互预览时显示在画布右上） */
+.page-bar {
+  position: absolute; right: 12px; top: 12px; z-index: 60;
+  display: flex; gap: 8px; align-items: center;
+  background: #ffffff; border: 1px solid #e0e3e8; border-radius: 8px;
+  padding: 4px 10px; box-shadow: 0 2px 8px rgba(16,24,40,.08);
+  font-size: 12px; color: #1f2329; max-width: 46%;
+}
+.page-bar .page-back {
+  border: 0; background: none; color: #3a6df0; font-size: 12px;
+  cursor: pointer; padding: 2px 4px; border-radius: 4px; flex: 0 0 auto;
+}
+.page-bar .page-back:hover { background: #f2f4f7; }
+.page-bar .page-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-bar .page-live {
+  color: #067647; background: #ecfdf3; border: 1px solid #a6f4c5;
+  border-radius: 999px; padding: 1px 8px; font-size: 11px; flex: 0 0 auto;
+}
 .fold-toggle { display: flex; gap: 4px; }
 .fold-toggle button { padding: 4px 8px; }
 .fold-toggle button.active { background: #3a6df0; border-color: #3a6df0; color: #fff; }

@@ -1,16 +1,25 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import { parse } from '../parser/parser'
 import { serialize } from '../ir/serialize'
 import { IRFile, IRNode } from '../ir/types'
 import { Path, updateNodeAtPath, removeNodeAtPath, insertChildAtPath, getNodeAtPath, samePath } from '../ir/mutate'
 import { acceptsChild, canAcceptMore } from '../ir/constraints'
 import { extractStyles, StyleTables } from '../renderer/styleTable'
-import { extractComponents, buildersOf, BuilderDef } from '../renderer/components'
+import { buildersOf, BuilderDef } from '../renderer/components'
+import { extractMethodRoutes, RouteAction } from '../renderer/shared'
+import { buildComponents, pickStartFile, routeTarget } from '../project/project'
 import sampleSrc from '../assets/sample.ets?raw'
 import type { DropTarget } from '../editor/dnd'
 
 const HISTORY_CAP = 50
+
+/** localStorage 安全包装：媒体 dataURL 撑爆配额时静默失败（内存态不受影响，刷新后重导即可） */
+const safeStorage = {
+  getItem: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
+  setItem: (k: string, v: string) => { try { localStorage.setItem(k, v) } catch { /* 配额满：放弃落盘 */ } },
+  removeItem: (k: string) => { try { localStorage.removeItem(k) } catch { /* ignore */ } },
+}
 
 interface StoreState {
   code: string
@@ -39,6 +48,38 @@ interface StoreState {
   components: Record<string, IRFile>
   /** @Builder 定义表（随 setCode 派生，带参调用点只读替换渲染用） */
   builders: Record<string, BuilderDef>
+  /** 项目模式：整项目导入后的文件表（path → 源码）；空表 = 单文件模式 */
+  files: Record<string, string>
+  /** 当前编辑/预览的文件（files 表键）；null = 单文件模式 */
+  currentFile: string | null
+  /** 导入的媒体资源（文件名去扩展名 → dataURL），$r('app.media.x')/路径引用按此键解析 */
+  media: Record<string, string>
+  /** 项目 resources element 资源表（color.json / string.json） */
+  resColors: Record<string, string>
+  resStrings: Record<string, string>
+  /** 交互预览导航栈（页面历史，router.back 回退用） */
+  navStack: string[]
+  /** 交互预览模式：点击命中 router 导航的组件执行页面跳转而非选中 */
+  interactive: boolean
+  /** 自适应窗口：画布缩放自动适配可用空间（手动缩放时自动关闭） */
+  fitMode: boolean
+  /** 当前文件方法名 → router 动作表（随 setCode 派生，onClick 间接导航解析用） */
+  methodRoutes: Record<string, RouteAction>
+  setInteractive: (v: boolean) => void
+  setFitMode: (v: boolean) => void
+  /** 整项目导入：替换全部文件/媒体/资源表并跳到起始页 */
+  importProject: (files: Record<string, string>, media: Record<string, string>, colors: Record<string, string>, strings: Record<string, string>) => void
+  /** 追加导入媒体（合并进媒体表） */
+  importMedia: (entries: Record<string, string>) => void
+  removeMedia: (name: string) => void
+  /** 切换当前文件：先把当前 code 写回 files 再载入目标（撤销历史清空） */
+  setCurrentFile: (path: string, opts?: { push?: boolean }) => void
+  /** 交互预览导航：router.pushUrl(url) → 解析目标文件并压栈切换 */
+  navigateTo: (url: string) => void
+  /** 交互预览导航：router.back() → 弹出栈顶回退 */
+  navigateBack: () => void
+  /** 单文件导入：退出项目模式（清空文件/媒体/资源/导航栈）并载入该文件 */
+  loadSingleFile: (code: string) => void
   /** 辅助标记：是否在画布上显示 ƒ/if/ForEach 角标与 builder 标签（默认关，页面即所得） */
   showAids: boolean
   setShowAids: (v: boolean) => void
@@ -96,6 +137,58 @@ export const useStore = create<StoreState>()(
         stylesTable: { styles: {}, extends: {} },
         components: {},
         builders: {},
+        files: {},
+        currentFile: null,
+        media: {},
+        resColors: {},
+        resStrings: {},
+        navStack: [],
+        interactive: false,
+        fitMode: true,
+        methodRoutes: {},
+        setInteractive: (v) => set({ interactive: v }),
+        setFitMode: (v) => set({ fitMode: v }),
+        importProject: (files, media, colors, strings) => {
+          const start = pickStartFile(files)
+          set({
+            files, media, resColors: colors, resStrings: strings,
+            currentFile: start, navStack: [], selectedPath: null, dropTarget: null,
+            past: [], future: [], clipboard: null,
+          })
+          if (start) get().setCode(files[start])
+        },
+        importMedia: (entries) => set({ media: { ...get().media, ...entries } }),
+        removeMedia: (name) => {
+          const m = { ...get().media }
+          delete m[name]
+          set({ media: m })
+        },
+        setCurrentFile: (path, opts) => {
+          const s = get()
+          if (!s.files[path]) return
+          // 写回当前页（结构编辑/手改的最新 code 在 code 字段，files 里的可能是旧拷贝）
+          const files = s.currentFile ? { ...s.files, [s.currentFile]: s.code } : s.files
+          const navStack = opts?.push && s.currentFile ? [...s.navStack, s.currentFile].slice(-20) : s.navStack
+          set({ files, currentFile: path, navStack })
+          get().setCode(files[path])
+        },
+        navigateTo: (url) => {
+          const s = get()
+          const target = routeTarget(url, s.files)
+          if (!target || target === s.currentFile) return
+          s.setCurrentFile(target, { push: true })
+        },
+        navigateBack: () => {
+          const s = get()
+          if (!s.navStack.length) return
+          const prev = s.navStack[s.navStack.length - 1]
+          set({ navStack: s.navStack.slice(0, -1) })
+          get().setCurrentFile(prev)
+        },
+        loadSingleFile: (code) => {
+          set({ files: {}, currentFile: null, media: {}, resColors: {}, resStrings: {}, navStack: [], methodRoutes: {} })
+          get().setCode(code)
+        },
         copyNode: (path) => {
           const s = get()
           if (!s.ir) return
@@ -134,6 +227,9 @@ export const useStore = create<StoreState>()(
           s.insertChild(parent, clip, index)
         },
         setCode: (c, opts) => {
+          // 项目模式下把最新 code 写回 files 表（切换页面/持久化都以 files 为准）
+          const cf = get().currentFile
+          const files = cf ? { ...get().files, [cf]: c } : get().files
           try {
             const ir = parse(c)
             // 代码源变更（导入/手改/重置）视为新历史起点，清空两栈；
@@ -142,15 +238,18 @@ export const useStore = create<StoreState>()(
             const keep = !!opts?.keepHistory && !!cur
             set({
               code: c, ir, error: null, selectedPath: null, dropTarget: null,
+              files,
               stylesTable: extractStyles(ir),
-              components: extractComponents(ir),
+              // 同文件组件 + import 解析到的跨文件组件（解析缓存保证编辑当前页时不重解整个工程）
+              components: buildComponents(cf ?? '', ir, files),
               builders: buildersOf(ir),
+              methodRoutes: extractMethodRoutes(ir),
               past: keep ? [...get().past, cur!].slice(-HISTORY_CAP) : [],
               future: [],
             })
           } catch (e: any) {
             // 解析失败保留最后一次成功的 IR：画布不闪白，错误由代码窗横幅展示原因
-            set({ code: c, error: String(e?.message || e), selectedPath: null, dropTarget: null, past: [], future: [] })
+            set({ code: c, error: String(e?.message || e), selectedPath: null, dropTarget: null, past: [], future: [], files, methodRoutes: {} })
           }
         },
         setDevice: (m) => set({ deviceModel: m }),
@@ -269,13 +368,23 @@ export const useStore = create<StoreState>()(
           })
         },
         bumpDeviceVersion: () => set({ deviceVersion: get().deviceVersion + 1 }),
-        resetToSample: () => get().setCode(sampleSrc),
+        resetToSample: () => {
+          // 退出项目模式：清空文件/媒体/资源/导航栈，回到内置单文件样例
+          set({ files: {}, currentFile: null, media: {}, resColors: {}, resStrings: {}, navStack: [], methodRoutes: {} })
+          get().setCode(sampleSrc)
+        },
       }
     },
     {
       name: 'arkts-viz-v1',
-      // 只持久化 code/deviceModel/fold/zoom：undo 栈、选中态、剪贴簿等均不落盘
-      partialize: (s) => ({ code: s.code, deviceModel: s.deviceModel, fold: s.fold, showAids: s.showAids, zoom: s.zoom }),
+      storage: createJSONStorage(() => safeStorage),
+      // 持久化 code/设备/项目文件与媒体资源：undo 栈、选中态、剪贴簿等均不落盘
+      partialize: (s) => ({
+        code: s.code, deviceModel: s.deviceModel, fold: s.fold, showAids: s.showAids, zoom: s.zoom,
+        files: s.files, currentFile: s.currentFile, media: s.media,
+        resColors: s.resColors, resStrings: s.resStrings,
+        navStack: s.navStack, interactive: s.interactive, fitMode: s.fitMode,
+      }),
     },
   ),
 )

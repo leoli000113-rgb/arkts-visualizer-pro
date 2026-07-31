@@ -81,7 +81,10 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 - **定位/变换**：position/offset/zIndex/alignSelf/visibility/constraintSize + translate/rotate/scale（transform 合成）。
 - **表达式小求值**（`shared.evalExpr`，禁 eval）：字面量/`this.x`/三元/比较/&& || ??/!/加减乘除/拼接/成员访问（`.prop` `?.prop` `[i]`，含 `.length`），求不出一律回退原文。styleOf 与 resolveStr/Num/Bool 全部走求值感知版；`if` 条件折叠同样走求值器。
 - **@Styles/@Extend 展开**：`@Styles name()` 与 `@Extend(Comp) name()`（struct 成员与全局 function 均支持）解析成样式表（`renderer/styleTable.ts`）；0 参样式调用在 styleOf 就地展开（@Extend 组件专属优先），本机后续修饰符自然覆盖。
-- **同文件自定义组件渲染**：postamble 里的 `@Component struct` 逐个解析成组件 IR 表（`renderer/components.ts`）；未收录类型按名命中即渲染其 build()，调用点 obj 参数按名覆盖组件内字段/@State 初值（含 raw 成员字面量字段提取）。实例内部只读（pointer-events 穿透），递归深度限 3；跨文件 import 的组件仍是占位卡。
+- **同文件自定义组件渲染**：postamble 里的 `@Component struct` 逐个解析成组件 IR 表（`renderer/components.ts`）；未收录类型按名命中即渲染其 build()，调用点 obj 参数按名覆盖组件内字段/@State 初值（含 raw 成员字面量字段提取）。实例内部只读（pointer-events 穿透），递归深度限 3。
+- **跨文件组件渲染**：`import { X } from '../components/X'` 由 `project.buildComponents` 解析进组件表（按 path+code 缓存解析结果，编辑当前页不重解整个工程）；同文件组件优先于跨文件同名。
+- **媒体与资源**：导入工程目录或单独导入图片/视频后，`$r('app.media.x')`/`$rawfile`/相对路径引用经 `resolveMediaRef` 命中媒体表（文件名去扩展名为键）渲染真图/可播视频；`$r('app.color.x')`/`$r('app.string.x')` 走项目 `resources element` json（颜色项目表优先于内置语义色表）。
+- **router 导航模拟**：交互预览模式下，点击的组件 `onClick` 含 `router.pushUrl/replaceUrl/back`（内联或 `this.method()` 间接调用——`extractMethodRoutes` 从成员原文提取方法路由表）即执行页面切换/回退；url 按路径后缀匹配项目文件（`routeTarget`）。
 - **@Builder 带参调用**：调用点参数可静态求值时，按名替换进定义体做只读渲染（ForEach 内 `this.buildCard(item)` 经 substRawText 先替换再求值）；不可求值保持 Expr 徽标。无参调用点维持可编辑镜像。
 - **ForEach 对象数组**：数据源支持对象字面量（尾逗号容忍），模板内 `item.name` 成员访问、`'前缀' + item.n` 拼接、`(item, index)` 双参数替换。
 - **修饰符覆盖**：shadow/linearGradient/border(obj)/textOverflow/letterSpacing/lineHeight/fontStyle/fontFamily/clip/blur/backdropBlur/backgroundImage(Size) 等常用修饰符均有映射。
@@ -97,13 +100,15 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 - 属性面板：**专属区由 registry 的 FieldSpec schema 驱动** + 全量通用属性（布局+外观）+ 感叹号中文说明 + 「全部修饰符」兜底（可增删任意修饰符）。
 - 撤销/重做（Ctrl+Z/Y，50 步；连续手势合并为一步）、Delete 删除。
 - 节点剪贴簿：Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+V 粘贴（选中容器可接收则放入其内，否则落到选中节点之后；粘贴同样过子类型/独子约束）/ Ctrl+D 创建副本。
-- 画布缩放：左上缩放条（−/百分比点按重置/+ /适应窗口，0.2–2 持久化）；实现为 phone-frame 的 CSS transform，渲染内部仍以 1vp = 0.6px 为基准，dnd/resize 的指针换算统一走 `pxPerVp() = 0.6 × zoom`。
-- 侧栏搜索框：组件（按组名/组件名）/ 组件库 / 模板（按名称/描述）三页签共用过滤。
+- 画布缩放：左上缩放条（−/百分比点按重置/+ /适应窗口，0.2–2）；**「适应」为常开模式（默认开，持久化）**——ResizeObserver 监听画布可用空间与设备视口自动重算缩放，手动 −/+ 即退出回手动模式。实现为 phone-frame 的 CSS transform，渲染内部仍以 1vp = 0.6px 为基准，dnd/resize 的指针换算统一走 `pxPerVp() = 0.6 × zoom`。
+- 侧栏搜索框：页面（文件名/媒体名）/ 组件（按组名/组件名）/ 组件库 / 模板（按名称/描述）四页签共用过滤。
+- **项目模式（多页面）**：顶栏「导入项目」读取所选目录（webkitdirectory）——全部 `.ets/.ts`、图片/视频（单文件 ≤12MB 转 dataURL）、`resources element` 的 color/string json；侧栏「页面」页签列出全部文件（@Entry 标 ⌂）与媒体缩略图（可移除）。当前页 code 始终与 `files[currentFile]` 同步（setCode 写回 + 切换时写回），撤销历史随换页清空。
+- **交互预览**：顶栏开关。开启后画布右上页面栏显示「◀ 返回（导航栈非空时）+ 当前页名 + 交互预览徽标」；点击命中 router 导航的组件执行跳转而非选中（`frameOf` 拦截）。Stack 折叠分支不再产出空绝放层（原会拦截整屏点击）。
 - 模板：**即时缩图预览**（renderer 直接渲染模板 IR 的缩略卡）；套用可撤销——`setCode(code, { keepHistory: true })` 把当前页压入历史栈；普通代码源变更（导入/手改/重置）仍清空两栈。
 - 代码窗：**CodeMirror 6**（TS 高亮/行号/括号匹配），输入防抖 400ms 解析（失焦立即 flush）；**解析失败保留最后一次成功的 IR**——画布不闪白，错误在代码窗顶部红色横幅 + 编辑器内 lint 标记（gutter 红点，位置由 parser 报错文本提取）展示。
 - 顶栏：复制代码、导出 .ets、设备切换/折叠态、设备档案编辑/新增、编译风险警示、快捷键说明弹窗（?）。
 
-## 6. 测试策略（114 项，防退化锚点）
+## 6. 测试策略（147 项，防退化锚点）
 
 ```
 parser.test.ts      v1 子集 + sample_full 全景：往返幂等、If/ForEach/raw
@@ -113,6 +118,9 @@ builder.test.ts     @Builder 结构化、镜像、编辑写回定义、幂等
 validate.test.ts    编译约束校验（Scroll 独子等，对齐 hvigor 报错）
 store.test.ts       撤销重做/手势合并/右键菜单动作/剪贴簿/模板历史/22 种默认值往返
 registry.test.ts    registry 完整性：SUPPORTED 全覆盖/面板分组/默认节点往返/约束派生
+project.test.tsx    import 提取/路径与路由解析/媒体与资源分类/跨文件组件表/
+                    router 动作提取/resolveMediaRef/Image+字符串资源 SSR
+projectStore.test.ts 整项目导入/导航栈/跨文件组件表/换页写回/单文件退出项目模式
 fidelity.test.tsx   颜色通道/序列化补齐/通用属性 CSS 映射/默认外观
 fidelity2.test.tsx  evalExpr 求值器/ForEach 对象数组与 index/@Styles/@Extend 展开/
                     自定义组件/@Builder 带参/修饰符包/新组件冒烟
@@ -130,9 +138,9 @@ renderer.test.tsx   SSR 冒烟：sample.ets 不回归、sample_full 全树关键
 ## 7. 已知边界（诚实清单）
 
 - @Builder 带参调用为**只读替换渲染**（编辑请走定义处或无参镜像）；一个 builder 多次调用时只镜像第一个无参调用点。
-- 表达式走 evalExpr 小求值（三元/比较/逻辑/加减乘除/拼接/成员访问）；函数调用、复杂链式调用不求值——一律回退原文，不猜。事件（onClick/onChange）不模拟逻辑。
-- 自定义组件只解析同文件 struct（跨文件 import 仍占位）；实例内部只读不可编辑；组件定义本身在 postamble 原文保留，不在画布编辑。
-- 资源（$r 图片/字体文件）无法加载，以占位呈现。
+- 表达式走 evalExpr 小求值（三元/比较/逻辑/加减乘除/拼接/成员访问）；函数调用、复杂链式调用不求值——一律回退原文，不猜。事件（onClick/onChange）不模拟逻辑，**唯一例外是交互预览模式下的 router 导航**（pushUrl/replaceUrl/back，含 this.method 间接调用——方法体按配平花括号截取，属启发式）。
+- 跨文件组件只解析 import 声明命中的文件（一层；其内部再 import 的组件不递归），实例内部只读不可编辑；组件定义本身在 postamble 原文保留，不在画布编辑。
+- 媒体以 dataURL 内联进 localStorage（单文件 ≤12MB）；配额满时落盘静默失败（内存态仍在，刷新后重新导入即可）。`NavDestination`/`Navigation` 路由模式未支持（仅 router 接口）。
 - 预览是语义级还原（vp 布局 0 误差），物理像素级以真机为准。
 
 ## 8. 目录速查
@@ -144,15 +152,19 @@ app/src/
 │              + defaults/constraints（薄转接层，实现见 registry）
 ├─ registry/   ★ 组件注册表：types（ComponentSpec/FieldSpec）+ specs（25+ 组件声明）
 │              + index（getSpec/面板分组/约束派生/makeDefaultNode/nodeSummary）+ 测试
-├─ renderer/   shared（styleOf/color/frameOf/evalExpr 求值器）+ Renderer
+├─ project/    ★ 项目级逻辑：extractImports/resolveImport/routeTarget/pickStartFile
+│              + parseCached（path+code 缓存）+ buildComponents（跨文件组件表）
+│              + 媒体/资源分类（isMediaFile/mediaKeyOf/parseResourceJson）+ 测试
+├─ renderer/   shared（styleOf/color/frameOf/evalExpr 求值器/router 动作提取）+ Renderer
 │              + containers/forms/feedback/flow + RelativeContainer（约束求解引擎）
 │              + styleTable（@Styles 提取）+ components（同文件组件提取）+ resize
 ├─ editor/     dnd（落点/Alt 偏移/Stack 定位/吸附参考线/拖拽 ghost）+ OutlineTree
 │              + PropertyPanel（schema 驱动）+ DeviceEditor + ContextMenu + ErrorBoundary
-├─ panels/     TopBar + SidePanel（组件/组件库/模板+搜索）+ ZoomBar + CodePane
+├─ panels/     TopBar + SidePanel（页面/组件/组件库/模板+搜索）+ ZoomBar + CodePane
 │              （CodeMirror）+ HelpModal + TemplateThumb
 ├─ devices/    devices.json（官网校准）+ 覆盖层
-└─ store/      Zustand store（IR/历史/持久化/设备版本/缩放/剪贴簿/样式表/组件表）
+└─ store/      Zustand store（IR/历史/持久化/设备版本/缩放/剪贴簿/样式表/组件表
+│              + 项目文件表/媒体/资源/导航栈/交互预览/自适应模式）
 ```
 
 ## 9. 常用命令

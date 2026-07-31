@@ -7,7 +7,69 @@ import { TEMPLATE_CATEGORIES } from '../templates/templates'
 import { LIBRARY } from '../library/components'
 import { TemplateThumb } from './TemplateThumb'
 
-type SideTab = 'palette' | 'library' | 'templates'
+type SideTab = 'pages' | 'palette' | 'library' | 'templates'
+
+/** 项目页签：页面/文件列表（@Entry 标 ⌂）+ 导入的媒体资源（可移除） */
+function PagesPanel({ query }: { query: string }) {
+  const files = useStore(s => s.files)
+  const currentFile = useStore(s => s.currentFile)
+  const media = useStore(s => s.media)
+  const setCurrentFile = useStore(s => s.setCurrentFile)
+  const removeMedia = useStore(s => s.removeMedia)
+  const q = query.trim().toLowerCase()
+  const keys = Object.keys(files).sort().filter(k => !q || k.toLowerCase().includes(q))
+  if (Object.keys(files).length === 0) {
+    return (
+      <div className="palette">
+        <div className="palette-empty">
+          单文件模式。<br />
+          点顶栏「导入项目」选择 ArkTS 工程目录后，此处列出全部页面与媒体资源；「导入媒体」可单独追加图片/视频。
+        </div>
+      </div>
+    )
+  }
+  const mediaEntries = Object.entries(media).filter(([n]) => !q || n.toLowerCase().includes(q))
+  return (
+    <div className="palette">
+      <div className="palette-scroll">
+        <div className="palette-group">
+          <div className="palette-group-label">页面 / 文件 ({keys.length})</div>
+          <div className="page-list">
+            {keys.map(k => {
+              const name = k.split('/').pop()!.replace(/\.(ets|ts)$/, '')
+              const entry = files[k].includes('@Entry')
+              return (
+                <div key={k} className={`page-item${k === currentFile ? ' active' : ''}`}
+                  title={k} onClick={() => setCurrentFile(k)}>
+                  <span className="page-item-icon">{entry ? '⌂' : '·'}</span>
+                  <span className="page-item-name">{name}</span>
+                  {k === currentFile && <span className="page-item-cur">当前</span>}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+        {mediaEntries.length > 0 && (
+          <div className="palette-group">
+            <div className="palette-group-label">媒体资源 ({mediaEntries.length})</div>
+            <div className="media-grid">
+              {mediaEntries.map(([name, url]) => (
+                <div key={name} className="media-cell" title={`$r('app.media.${name}')`}>
+                  {url.startsWith('data:video')
+                    ? <span className="media-video-icon">🎬</span>
+                    : <img src={url} alt={name} draggable={false} />}
+                  <span className="media-name">{name}</span>
+                  <button className="media-del" title="从媒体表移除" onClick={() => removeMedia(name)}>×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="palette-hint">⌂ = @Entry 入口页；点击文件名切换编辑/预览目标</div>
+    </div>
+  )
+}
 
 function Palette({ query }: { query: string }) {
   const q = query.trim().toLowerCase()
@@ -104,20 +166,22 @@ function TemplatePanel({ query }: { query: string }) {
   )
 }
 
-/** 左侧栏：页签（组件/组件库/模板）+ 搜索 + 大纲树 */
+/** 左侧栏：页签（页面/组件/组件库/模板）+ 搜索 + 大纲树 */
 export function SidePanel() {
   const [sideTab, setSideTab] = useState<SideTab>('palette')
   const [sideQuery, setSideQuery] = useState('')
   return (
     <div className="side-col">
       <div className="side-tabs">
+        <button className={sideTab === 'pages' ? 'active' : ''} onClick={() => setSideTab('pages')}>页面</button>
         <button className={sideTab === 'palette' ? 'active' : ''} onClick={() => setSideTab('palette')}>组件</button>
         <button className={sideTab === 'library' ? 'active' : ''} onClick={() => setSideTab('library')}>组件库</button>
         <button className={sideTab === 'templates' ? 'active' : ''} onClick={() => setSideTab('templates')}>模板</button>
       </div>
       <div className="side-search">
-        <input value={sideQuery} onChange={(e) => setSideQuery(e.target.value)} placeholder="搜索组件 / 模板…" />
+        <input value={sideQuery} onChange={(e) => setSideQuery(e.target.value)} placeholder="搜索页面 / 组件 / 模板…" />
       </div>
+      {sideTab === 'pages' && <PagesPanel query={sideQuery} />}
       {sideTab === 'palette' && <Palette query={sideQuery} />}
       {sideTab === 'library' && <LibraryPanel query={sideQuery} />}
       {sideTab === 'templates' && <TemplatePanel query={sideQuery} />}

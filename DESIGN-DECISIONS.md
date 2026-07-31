@@ -397,3 +397,16 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - **@Builder 带参调用**：调用点参数可求值时按名替换进定义体只读渲染（ForEach 里 `this.mealRow(item.n)` 常见写法终于所见即所得）。
 - **新组件**：Divider / Blank / Badge（独子容器）/ Rating 注册进 registry + 渲染器，SUPPORTED 26 → 30。
 - 测试 114/114 绿，typecheck/lint/build 全绿；Playwright 进阶真实文件（@Extend+@Builder 带参+Badge+?.+index）截图验证。
+
+## 20. 项目化：整工程导入 / 跨页面导航 / 媒体资源 / 自适应屏幕（2026-07-30）
+
+针对「没有自适应屏幕、网页与真机观感有出入」「没有跨页面」「想直接导入整个 ArkTS 项目」三个反馈：
+
+- **新模块 `project/`（纯逻辑，18 项单测）**：`extractImports`（preamble 正则提取命名/默认/别名导入）、`resolveImport`（相对路径拼接 + .ets/.ts 后缀尝试）、`routeTarget`（router url 按路径后缀匹配项目文件，/pages/ 优先最短优先）、`pickStartFile`（pages/Index+@Entry 优先）、`parseCached`（path+code 缓存，编辑当前页不重解整个工程）、`buildComponents`（import 命中的跨文件组件 + 同文件组件，后者优先）、媒体/资源分类（isMediaFile/mediaKeyOf/parseResourceJson）。
+- **跨文件组件渲染**：`import { PageView } from '../components/PageView'` 解析进组件表按真实内容渲染（NovelReader 的 ReadingPage 实测不再是占位卡）。一层解析不递归，组件自身的 @Styles 不跨文件生效（文档化边界）。
+- **router 导航模拟**：`extractMethodRoutes` 从成员原文提取「方法名 → router 动作」表（配平花括号截取方法体），`routerActionOf` 先查 onClick 内联调用、再解析 `this.open(id)` 间接调用。frameOf 在交互预览模式下拦截点击执行 `navigateTo/navigateBack`（导航栈 cap 20）。
+- **媒体资源真实渲染**：导入工程目录或单独导入图片/视频（≤12MB 转 dataURL 落盘），`resolveMediaRef` 统一解析 `$r('app.media.x')`/`$rawfile`/相对路径/URL；Image 命中渲染真图（objectFit 默认 Cover 对齐 ArkUI）、Video 渲染可播 `<video>`。`$r` 颜色/字符串走项目 resources element json（颜色项目表优先于内置语义表）。localStorage 加安全包装——配额满静默放弃落盘，不炸应用。
+- **自适应屏幕**：fitMode 常开（默认开，持久化）——App 内 ResizeObserver 监听画布可用空间与设备视口实时重算缩放；手动 −/+ 以当前有效缩放为起点并退出适应模式，「适应」按钮常按回启。
+- **Stack 空层修复（顺手修的真 bug）**：折叠 If/注释等渲染为 null 的子节点原先仍产出 inset:0 绝放层，整屏拦截点击（ReadingPage 这类「Stack + 隐藏 overlay」结构在编辑模式下也无法选中内容）。现 null 子节点不产层，且绝放层 pointer-events 穿透、内容层恢复。
+- **UI**：侧栏第四页签「页面」（文件列表 @Entry 标 ⌂ + 媒体缩略图可移除）；画布右上页面栏（◀ 返回 + 当前页名 + 交互预览徽标）；顶栏 导入项目/导入媒体/交互预览 开关；单文件导入走 `loadSingleFile` 退出项目模式。
+- 测试 147/147 绿，typecheck/lint/build 全绿；真实 NovelReader 工程（4 页面 + 2 组件）走通「导入 → BookShelf → navigateTo ReadingPage → 交互点 ‹ 返回 BookShelf」全链路，Playwright 截图验证媒体/字符串资源渲染。

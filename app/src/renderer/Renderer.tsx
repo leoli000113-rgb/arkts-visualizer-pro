@@ -7,7 +7,7 @@ import { RelativeContainerEngine } from './RelativeContainer'
 import {
   RenderCtx, RenderEnv, ViewProps,
   ctorObj, firstStr, firstStrE, num, vp, keyOf, frameOf, stackAlign, visibleChildren,
-  splitTop, evalExpr, ForEachItem,
+  splitTop, evalExpr, ForEachItem, RenderRes, resolveMediaRef,
 } from './shared'
 import { ArgVal } from '../ir/types'
 import {
@@ -54,7 +54,12 @@ export function renderNode(
   const components = env?.components ?? useStore.getState().components ?? {}
   const builders = env?.builders ?? useStore.getState().builders ?? {}
   const depth = env?.depth ?? 0
-  const childEnv: RenderEnv = { states, aids, styles, extends: extendsTable, components, builders, depth }
+  const res: RenderRes = env?.res ?? {
+    media: useStore.getState().media,
+    colors: useStore.getState().resColors,
+    strings: useStore.getState().resStrings,
+  }
+  const childEnv: RenderEnv = { states, aids, styles, extends: extendsTable, components, builders, depth, res }
   const ctx: RenderCtx = {
     selectedPath,
     onSelect,
@@ -66,6 +71,7 @@ export function renderNode(
     components,
     builders,
     depth,
+    res,
     render: (c, p, nm) => renderNode(c, p, selectedPath, onSelect, dropTarget, nm ?? false, childEnv),
     renderChildren: (n, p) => visibleChildren(n.children, states).map(
       ({ c, i }) => renderNode(c, [...p, i], selectedPath, onSelect, dropTarget, false, childEnv),
@@ -151,7 +157,7 @@ export function renderNode(
         </div>
       )
     }
-    // 同文件自定义组件：按名解析并渲染其 build()，调用点参数按名覆盖；实例内部只读
+    // 同文件/跨文件自定义组件：按名解析并渲染其 build()，调用点参数按名覆盖；实例内部只读
     const comp = components[node.type]
     if (comp && depth < 3) {
       const instEnv: RenderEnv = {
@@ -159,7 +165,9 @@ export function renderNode(
         aids,
         styles,
         components,
+        builders,
         depth: depth + 1,
+        res,
       }
       return (
         <div key={k} {...f.common} className="ir-instance" style={{ display: 'flex', flexDirection: 'column', alignSelf: 'stretch', ...f.style }}>
@@ -220,14 +228,22 @@ export function renderNode(
       const { justifyContent, alignItems } = stackAlign(o?.alignContent)
       return (
         <div key={k} {...f.common} style={{ position: 'relative', ...f.style }}>
-          {visibleChildren(node.children, states).map(({ c, i }) => (
-            <div key={keyOf([...path, i])} style={{
-              position: 'absolute', inset: 0,
-              display: 'flex', alignItems, justifyContent,
-            }}>
-              {ctx.render(c, [...path, i])}
-            </div>
-          ))}
+          {visibleChildren(node.children, states).map(({ c, i }) => {
+            const rendered = ctx.render(c, [...path, i])
+            // 折叠 If/注释等渲染为 null 的子节点不产出绝放层，避免空层拦截点击/遮挡内容
+            if (rendered === null) return null
+            return (
+              <div key={keyOf([...path, i])} style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', alignItems, justifyContent,
+                pointerEvents: 'none',
+              }}>
+                <div style={{ display: 'contents', pointerEvents: 'auto' }}>
+                  {rendered}
+                </div>
+              </div>
+            )
+          })}
           {f.indicator}
           {f.handles}
         </div>
@@ -244,7 +260,7 @@ export function renderNode(
     case 'Text':
       return (
         <div key={k} {...f.common} style={{ display: 'inline-block', ...f.style }}>
-          {firstStrE(node, states) ?? ''}
+          {firstStrE(node, states, res) ?? ''}
           {f.indicator}
           {f.handles}
         </div>
@@ -259,21 +275,33 @@ export function renderNode(
           backgroundColor: '#0A59F7', color: '#FFFFFF',
           cursor: 'default', ...f.style,
         }}>
-          {firstStrE(node, states) ?? ''}
+          {firstStrE(node, states, res) ?? ''}
           {f.indicator}
           {f.handles}
         </button>
       )
     }
     case 'Image': {
-      const src = firstStr(node) ?? ''
+      // 媒体可解析（$r('app.media.x')/$rawfile/路径/URL 命中导入媒体表）→ 真图渲染，否则占位
+      const url = resolveMediaRef(node.ctorArgs[0], ctx.res.media)
+      if (url) {
+        const fit = (f.style.objectFit as string | undefined) ?? 'cover' // ArkUI 默认 ImageFit.Cover
+        return (
+          <div key={k} {...f.common} style={{ display: 'flex', overflow: 'hidden', ...f.style }}>
+            <img src={url} draggable={false} alt="" style={{ width: '100%', height: '100%', objectFit: fit as never, display: 'block' }} />
+            {f.indicator}
+            {f.handles}
+          </div>
+        )
+      }
+      const src = firstStr(node) ?? (node.ctorArgs[0] && node.ctorArgs[0].t === 'raw' ? node.ctorArgs[0].v : '')
       return (
         <div key={k} {...f.common} style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           color: '#888', fontSize: 11, border: '1px dashed #bbb',
           background: '#f3f3f3', ...f.style,
         }}>
-          [Image: {src}]
+          [Image: {src.length > 40 ? `${src.slice(0, 40)}…` : src}]
           {f.indicator}
           {f.handles}
         </div>
