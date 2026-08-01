@@ -6,11 +6,10 @@
 .topbar .file:hover { background: #f2f4f7; }
 .topbar .dim { color: #667085; font-size: 12px; }
 
-/* ---- 停靠面板布局（四边停靠区 + 可拖尺寸） ---- */
+/* ---- 停靠面板布局（左/右/底三边停靠区 + 可拖尺寸） ---- */
 .dock-zone { flex: 0 0 auto; display: flex; background: #ffffff; min-height: 0; min-width: 0; }
 .dz-left { flex-direction: row; border-right: 1px solid #e0e3e8; }
 .dz-right { flex-direction: row; border-left: 1px solid #e0e3e8; }
-.dz-top { flex-direction: column; border-bottom: 1px solid #e0e3e8; }
 .dz-bottom { flex-direction: column; border-top: 1px solid #e0e3e8; }
 .dock-zone-inner { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .dzi-col .dock-box + .dock-box { border-top: 1px solid #e0e3e8; }
@@ -30,8 +29,28 @@
 .dock-size:hover { background: rgba(58,109,240,.35); }
 .zone-handle { flex: 0 0 auto; z-index: 30; }
 .zh-left, .zh-right { width: 5px; cursor: ew-resize; }
-.zh-top, .zh-bottom { height: 5px; cursor: ns-resize; }
+.zh-bottom { height: 5px; cursor: ns-resize; }
 .zone-handle:hover { background: rgba(58,109,240,.35); }
+/* 大纲树专用条：贴左停靠区右侧的固定全高条（dock-box 复用首部/尺寸把手样式） */
+.outline-strip { background: #ffffff; border-right: 1px solid #e0e3e8; }
+/* 大纲树条收合（首部 « 按钮）与收合态窄条 */
+.outline-fold-btn {
+  border: 0; background: none; color: #98a2b3; font-size: 13px; line-height: 1;
+  cursor: pointer; padding: 2px 6px; border-radius: 4px;
+}
+.outline-fold-btn:hover { background: #f2f4f7; color: #3a6df0; }
+.outline-rail {
+  flex: 0 0 auto; width: 30px; background: #ffffff; border-right: 1px solid #e0e3e8;
+  display: flex; flex-direction: column; align-items: center; padding-top: 6px; gap: 8px;
+  cursor: pointer; user-select: none;
+}
+.outline-rail:hover { background: #f7f9fc; }
+.outline-rail-btn {
+  border: 0; background: none; color: #667085; font-size: 13px; line-height: 1;
+  cursor: pointer; padding: 2px 4px; border-radius: 4px;
+}
+.outline-rail-btn:hover { background: #f2f4f7; color: #3a6df0; }
+.outline-rail-label { writing-mode: vertical-rl; font-size: 11px; color: #98a2b3; letter-spacing: 2px; }
 .nav-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .prop {
   flex: 1; overflow: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px;
@@ -148,14 +167,18 @@
 }
 .outline-empty { padding: 12px; color: #667085; font-size: 12px; }
 .outline-row {
-  display: flex; align-items: baseline; gap: 6px; padding: 3px 8px;
+  display: flex; align-items: center; gap: 6px; padding: 3px 8px;
   font-size: 12px; cursor: pointer; white-space: nowrap; user-select: none;
+  overflow: hidden; /* 窄面板下行内容不横向溢出：摘要省略、操作钮常驻可视区 */
 }
 .outline-row:hover { background: #eef2f6; }
 .outline-row.sel { background: #3a6df0; }
 .outline-row.sel .outline-type, .outline-row.sel .outline-summary { color: #fff; }
-.outline-type { color: #1f2937; font-weight: 500; }
-.outline-summary { color: #667085; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.outline-type { color: #1f2937; font-weight: 500; flex: 0 0 auto; }
+.outline-summary {
+  flex: 1 1 auto; min-width: 0;
+  color: #667085; font-size: 11px; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* 大纲树行内快捷操作：悬停显示 */
 .outline-acts { display: none; margin-left: auto; gap: 2px; flex: 0 0 auto; }

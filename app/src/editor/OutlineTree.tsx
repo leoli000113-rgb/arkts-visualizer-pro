@@ -105,8 +105,14 @@ function TreeRow({ node, path, depth, collapsed, onToggle, onPick }: {
         className={cls}
         style={{ paddingLeft: 8 + depth * 14 }}
         data-tree-path={key}
-        onClick={(e) => { e.stopPropagation(); setSelected(path) }}
-        onPointerDown={(e) => { if (path.length > 0) beginMaybeMove(path, e) }}
+        onClick={(e) => {
+          e.stopPropagation()
+          const st = useStore.getState()
+          // 粘贴模式：点击行 = 剪贴簿组件放进容器内部 / 放到其后（不选中）
+          if (st.pasteArmed && st.clipboard) { st.pasteAt(path); return }
+          setSelected(path)
+        }}
+        onPointerDown={(e) => { if (path.length > 0) beginMaybeMove(path, e, true) }}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -160,6 +166,7 @@ function TreeRow({ node, path, depth, collapsed, onToggle, onPick }: {
 export function OutlineTree() {
   const ir = useStore(s => s.ir)
   const selectedPath = useStore(s => s.selectedPath)
+  const dropTarget = useStore(s => s.dropTarget)
   const boxRef = useRef<HTMLDivElement>(null)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [picker, setPicker] = useState<PickerState | null>(null)
@@ -189,12 +196,44 @@ export function OutlineTree() {
     setPicker({ x: e.clientX, y: e.clientY, parent, index })
   }
 
-  // 画布侧选中时，大纲树滚动到对应行
+  // 画布侧选中时，展开选中节点的全部祖先（否则行不在 DOM 中）并滚动到对应行。
+  // 用 store 订阅而非 effect 内同步 setState（react-hooks/set-state-in-effect）
+  useEffect(() => useStore.subscribe((s, prev) => {
+    if (!s.selectedPath || s.selectedPath === prev.selectedPath) return
+    const sp = s.selectedPath
+    setCollapsed(old => {
+      if (!old.size) return old
+      const next = new Set(old)
+      let changed = false
+      for (let i = 0; i < sp.length; i++) {
+        if (next.delete(sp.slice(0, i).join('.'))) changed = true
+      }
+      return changed ? next : old
+    })
+  }), [])
   useEffect(() => {
     if (!selectedPath || !boxRef.current) return
     const el = boxRef.current.querySelector(`[data-tree-path="${selectedPath.join('.')}"]`)
     el?.scrollIntoView({ block: 'nearest' })
   }, [selectedPath])
+
+  // 拖拽悬停收合容器 600ms 自动展开（方便把组件放进深层容器）
+  useEffect(() => {
+    if (!dropTarget || dropTarget.pos !== 'inside' || !ir) {
+      return
+    }
+    const key = dropTarget.path.join('.')
+    if (!collapsed.has(key)) return
+    const timer = window.setTimeout(() => {
+      setCollapsed(prev => {
+        if (!prev.has(key)) return prev
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }, 600)
+    return () => window.clearTimeout(timer)
+  }, [dropTarget, ir, collapsed])
 
   if (!ir) return <div className="outline-empty">解析失败或无内容</div>
   return (
@@ -202,7 +241,7 @@ export function OutlineTree() {
       <div className="outline" ref={boxRef}>
         <TreeRow node={ir.root} path={[]} depth={0} collapsed={collapsed} onToggle={onToggle} onPick={onPick} />
       </div>
-      <div className="outline-hint">悬停行：＋插入 · ⧉副本 · ✕删除 · 拖拽移动 · 右键更多</div>
+      <div className="outline-hint">悬停行：＋插入 · ⧉副本 · ✕删除 · 拖拽移动（中部放入容器，悬停自动展开）· 右键更多</div>
       {picker && <InsertPicker picker={picker} onClose={() => setPicker(null)} />}
     </div>
   )

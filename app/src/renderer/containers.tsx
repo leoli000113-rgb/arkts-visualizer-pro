@@ -45,13 +45,16 @@ export function FlexView({ node, path, ctx }: ViewProps) {
   )
 }
 
-/** Scroll：.scrollable(ScrollDirection.*) → overflow，默认 Vertical */
+/** Scroll：.scrollable(ScrollDirection.*) → overflow，默认 Vertical。
+ *  ArkUI 滚动容器默认占满父组件交叉轴（模板常不写 width 也满宽）→ 基线 alignSelf stretch；
+ *  显式 width/alignSelf 修饰符经 f.style 自然覆盖（stretch 对显式交叉轴尺寸无效）。 */
 export function ScrollView({ node, path, ctx }: ViewProps) {
   const f = frameOf(node, path, ctx)
   const dir = getModifier(node, 'scrollable')?.args[0]
   const horizontal = !!dir && dir.t === 'enum' && dir.v.endsWith('.Horizontal')
   return (
     <div {...f.common} style={{
+      alignSelf: 'stretch',
       overflowX: horizontal ? 'auto' : 'hidden',
       overflowY: horizontal ? 'hidden' : 'auto',
       ...f.style,
@@ -63,7 +66,7 @@ export function ScrollView({ node, path, ctx }: ViewProps) {
   )
 }
 
-/** List：ctor obj space → gap，默认纵向；.listDirection(Axis.Horizontal) → 横向 */
+/** List：ctor obj space → gap，默认纵向；.listDirection(Axis.Horizontal) → 横向（交叉轴占满同 Scroll） */
 export function ListView({ node, path, ctx }: ViewProps) {
   const f = frameOf(node, path, ctx)
   const o = ctorObj(node)
@@ -72,6 +75,7 @@ export function ListView({ node, path, ctx }: ViewProps) {
   const horizontal = !!dirM && dirM.t === 'enum' && dirM.v.endsWith('.Horizontal')
   return (
     <div {...f.common} style={{
+      alignSelf: 'stretch',
       display: 'flex', flexDirection: horizontal ? 'row' : 'column',
       gap: space != null ? `${vp(space)}px` : undefined,
       ...f.style,
@@ -110,6 +114,7 @@ export function GridView({ node, path, ctx }: ViewProps) {
   const columnsGap = numMod('columnsGap')
   return (
     <div {...f.common} style={{
+      alignSelf: 'stretch',
       display: 'grid',
       gridTemplateColumns: strMod('columnsTemplate'),
       gridTemplateRows: strMod('rowsTemplate'),
@@ -147,7 +152,7 @@ export function TabsView({ node, path, ctx }: ViewProps) {
   const [active, setActive] = useState(() => Math.round(resolveNum(o?.index, ctx.states) ?? 0))
   const cur = Math.max(0, Math.min(active, Math.max(0, node.children.length - 1)))
   return (
-    <div {...f.common} style={{ display: 'flex', flexDirection: 'column', ...f.style }}>
+    <div {...f.common} style={{ alignSelf: 'stretch', display: 'flex', flexDirection: 'column', ...f.style }}>
       <div className="ir-tabs-bar">
         {node.children.map((c, i) => {
           const ta = getModifier(c, 'tabBar')?.args[0]

@@ -46,6 +46,10 @@ export function setModifier(node: IRNode, name: string, args: ArgVal[]): IRNode 
   return { ...node, modifiers }
 }
 
+export function removeModifier(node: IRNode, name: string): IRNode {
+  return { ...node, modifiers: node.modifiers.filter(m => m.name !== name) }
+}
+
 export function numModifier(node: IRNode, name: string): number | undefined {
   const m = getModifier(node, name)
   return m && m.args[0].t === 'num' ? m.args[0].v : undefined

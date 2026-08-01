@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { color, styleOf } from './shared'
+import { color, styleOf, wouldCollapse } from './shared'
 import { renderNode } from './Renderer'
 import { serializeArg } from '../ir/serialize'
 import { parse } from '../parser/parser'
 import { serialize } from '../ir/serialize'
 import { ArgVal, IRNode } from '../ir/types'
+import { Path } from '../ir/mutate'
 import { createElement } from 'react'
 
 const node = (type: string, mods: IRNode['modifiers'] = [], children: IRNode[] = []): IRNode =>
@@ -86,5 +87,74 @@ describe('默认对齐与默认外观（与 ArkUI 一致）', () => {
   it('Column 显式 alignItems 覆盖默认', () => {
     const html = render(node('Column', [mod('alignItems', en('HorizontalAlign.Start'))]))
     expect(html).toContain('align-items:flex-start')
+  })
+})
+
+describe('定位包含块（与真机一致）', () => {
+  const render2 = (n: IRNode, sel: Path | null = null) =>
+    renderToStaticMarkup(createElement(() => renderNode(n, [], sel, () => {}, null, false, { states: [] }) as any))
+  /** 取指定 data-path 元素的内联 style 字符串（SSR 属性顺序：data-path 先于 style） */
+  const styleAt = (html: string, path: string): string =>
+    html.match(new RegExp(`data-path="${path}"[^>]*?style="([^"]*)"`))?.[1] ?? ''
+
+  it('普通节点基线 position:relative（包含块不随选中变化）', () => {
+    const html = render2(node('Column', [mod('width', { t: 'str', v: '100%' })]))
+    expect(styleAt(html, '')).toContain('position:relative')
+  })
+  it('.position 节点被选中后仍 absolute（修复：选中曾覆盖为 relative 导致回流乱跳）', () => {
+    const t = node('Text', [mod('position', { t: 'obj', v: { x: num(10), y: num(20) } })])
+    const html = render2(node('Column', [mod('width', { t: 'str', v: '100%' })], [t]), [0])
+    expect(styleAt(html, '0')).toContain('position:absolute')
+    expect(styleAt(html, '0')).toContain('left:6px')
+  })
+  it('塌缩容器不建立包含块：无显式尺寸且子节点全部 position 时保持 static', () => {
+    const scroll = node('Scroll', [
+      mod('width', { t: 'str', v: '220%' }),
+      mod('position', { t: 'obj', v: { x: num(6), y: num(3) } }),
+    ], [node('Column')])
+    const row = node('Row', [], [scroll])
+    expect(wouldCollapse(row)).toBe(true)
+    const html = render2(row)
+    expect(styleAt(html, '')).not.toContain('position:relative') // Row 保持 static，子上溯定位
+    expect(styleAt(html, '0')).toContain('position:absolute')
+    // 有显式尺寸或存在在流子节点时不塌缩
+    expect(wouldCollapse(node('Row', [mod('width', { t: 'str', v: '100%' })], [scroll]))).toBe(false)
+    expect(wouldCollapse(node('Row', [], [scroll, node('Text')]))).toBe(false)
+  })
+  it('position/offset 支持百分比字符串', () => {
+    const s = styleOf(node('Text', [mod('position', { t: 'obj', v: { x: { t: 'str', v: '50%' }, y: num(20) } })]))
+    expect(s.left).toBe('50%')
+    expect(s.top).toBe(12)
+    const s2 = styleOf(node('Text', [mod('offset', { t: 'obj', v: { x: { t: 'str', v: '-50%' }, y: num(8) } })]))
+    expect(s2.transform).toBe('translate(-50%, 4.8px)')
+  })
+  it('负值参数（parser 产 raw 一元表达式）照常求值', () => {
+    const s = styleOf(node('Text', [mod('offset', { t: 'obj', v: { x: { t: 'raw', v: '-10' }, y: num(0) } })]))
+    expect(s.transform).toBe('translate(-6px, 0px)')
+    const s2 = styleOf(node('Text', [mod('position', { t: 'obj', v: { x: { t: 'raw', v: '-10' }, y: num(20) } })]))
+    expect(s2.left).toBe(-6)
+    const s3 = styleOf(node('Text', [mod('margin', { t: 'obj', v: { left: { t: 'raw', v: '-10' } } })]))
+    expect(s3.margin).toBe('0px 0px 0px -6px')
+  })
+})
+
+describe('Stack 与滚动容器的真机尺寸行为', () => {
+  const render3 = (n: IRNode) =>
+    renderToStaticMarkup(createElement(() => renderNode(n, [], null, () => {}, null, false, { states: [] }) as any))
+  it('Stack 用 CSS grid 同格层叠：尺寸 = 最大子节点（不再塌缩为 0）', () => {
+    const stack = node('Stack', [], [node('Column', [mod('height', num(150))])])
+    const html = render3(stack)
+    expect(html).toContain('display:grid')
+    expect(html).toContain('grid-area')
+    // 子节点不再包 absolute inset:0 层
+    expect(html).not.toContain('inset:0')
+  })
+  it('Scroll/List/Grid/Tabs 默认交叉轴占满，显式 alignSelf 可覆盖', () => {
+    expect(render3(node('Scroll'))).toContain('align-self:stretch')
+    expect(render3(node('List'))).toContain('align-self:stretch')
+    expect(render3(node('Grid'))).toContain('align-self:stretch')
+    expect(render3(node('Tabs'))).toContain('align-self:stretch')
+    const s = render3(node('Scroll', [mod('alignSelf', en('ItemAlign.Start'))]))
+    expect(s).toContain('align-self:flex-start')
   })
 })

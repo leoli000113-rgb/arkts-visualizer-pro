@@ -3,8 +3,9 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import { parse } from '../parser/parser'
 import { serialize } from '../ir/serialize'
 import { IRFile, IRNode } from '../ir/types'
-import { Path, updateNodeAtPath, removeNodeAtPath, insertChildAtPath, getNodeAtPath, samePath } from '../ir/mutate'
-import { acceptsChild, canAcceptMore } from '../ir/constraints'
+import { Path, updateNodeAtPath, removeNodeAtPath, insertChildAtPath, getNodeAtPath, samePath, getModifier, setModifier } from '../ir/mutate'
+import { acceptsChild, canAcceptMore, descendFullSingleChild } from '../ir/constraints'
+import { CONTAINER_TYPES } from '../registry'
 import { extractStyles, StyleTables } from '../renderer/styleTable'
 import { buildersOf, BuilderDef } from '../renderer/components'
 import { extractMethodRoutes, RouteAction } from '../renderer/shared'
@@ -14,15 +15,17 @@ import type { DropTarget } from '../editor/dnd'
 
 const HISTORY_CAP = 50
 
-/** 可停靠面板与停靠边：面板可停靠到屏幕四边，主尺寸可拖拽调整 */
-export type DockSide = 'left' | 'right' | 'top' | 'bottom'
-export type PanelId = 'nav' | 'outline' | 'props' | 'code'
+/** 可停靠面板与停靠边：面板可停靠到左/右/底三边，主尺寸可拖拽调整（顶部停靠已下线） */
+export type DockSide = 'left' | 'right' | 'bottom'
+export type PanelId = 'nav' | 'props' | 'code'
 
-const DEFAULT_DOCKS: Record<PanelId, DockSide> = { nav: 'left', outline: 'left', props: 'right', code: 'right' }
-/** 停靠区尺寸 px：左/右 = 区宽，上/下 = 区高 */
-const DEFAULT_ZONE: Record<DockSide, number> = { left: 240, right: 460, top: 240, bottom: 260 }
-/** 面板主尺寸 px：停靠左/右时 = 面板高度，停靠上/下时 = 面板宽度；0 = 与同窗面板 flex 均分 */
-const DEFAULT_PANEL_SIZE: Record<PanelId, number> = { nav: 0, outline: 0, props: 0, code: 0 }
+const DEFAULT_DOCKS: Record<PanelId, DockSide> = { nav: 'left', props: 'right', code: 'right' }
+/** 停靠区尺寸 px：左/右 = 区宽，下 = 区高 */
+const DEFAULT_ZONE: Record<DockSide, number> = { left: 240, right: 460, bottom: 260 }
+/** 面板主尺寸 px：停靠左/右时 = 面板高度，停靠下时 = 面板宽度；0 = 与同窗面板 flex 均分 */
+const DEFAULT_PANEL_SIZE: Record<PanelId, number> = { nav: 0, props: 0, code: 0 }
+/** 大纲树条默认宽度 px：独立固定条，贴着左停靠区右侧（不参与四边停靠） */
+const DEFAULT_OUTLINE_WIDTH = 260
 
 /** localStorage 安全包装：媒体 dataURL 撑爆配额时静默失败（内存态不受影响，刷新后重导即可） */
 const safeStorage = {
@@ -52,6 +55,16 @@ interface StoreState {
   copyNode: (path: Path) => void
   cutNode: (path: Path) => void
   pasteNode: () => void
+  /** 粘贴模式：复制/剪切后开启，点击容器放入内部、点击组件放到其后（可连续多处），Esc 退出（不持久化） */
+  pasteArmed: boolean
+  setPasteArmed: (v: boolean) => void
+  /** 粘贴模式点击落地：容器放入内部末尾（独子已满自动下钻内层），其余放到该节点之后 */
+  pasteAt: (target: Path) => void
+  /** 画布「位置调整」模式目标节点：右键菜单开启后，画布拖拽它只改 .offset 不动结构（不持久化） */
+  nudgePath: Path | null
+  setNudge: (p: Path | null) => void
+  /** 位置调整模式下方向键微调：按当前 .offset 增减（vp），连按合并为一步撤销 */
+  nudgeBy: (dx: number, dy: number) => void
   /** @Styles/@Extend 定义表（随 setCode 派生；UI 编辑不动 members，无需随 mutate 重算） */
   stylesTable: StyleTables
   /** 同文件自定义组件表（随 setCode 从 postamble 派生） */
@@ -73,12 +86,21 @@ interface StoreState {
   interactive: boolean
   /** 自适应窗口：画布缩放自动适配可用空间（手动缩放时自动关闭） */
   fitMode: boolean
+  /** 系统栏：画布显示手机状态栏与底部导航条，应用区避开安全区（默认开，持久化） */
+  systemBars: boolean
+  setSystemBars: (v: boolean) => void
   /** 面板停靠边（面板首部右键切换） */
   layoutDocks: Record<PanelId, DockSide>
-  /** 面板主尺寸 px：左/右停靠 = 高度，上/下停靠 = 宽度；0 = flex 均分 */
+  /** 面板主尺寸 px：左/右停靠 = 高度，底停靠 = 宽度；0 = flex 均分 */
   panelSize: Record<PanelId, number>
-  /** 停靠区尺寸 px：左/右 = 区宽，上/下 = 区高（区缘把手拖拽） */
+  /** 停靠区尺寸 px：左/右 = 区宽，下 = 区高（区缘把手拖拽） */
   zoneSize: Record<DockSide, number>
+  /** 大纲树条宽度 px（固定全高条，贴着左停靠区右侧，持久化） */
+  outlineWidth: number
+  setOutlineWidth: (px: number) => void
+  /** 大纲树条收合状态：true = 收成窄条（首部 « 按钮切换，默认 false 展开，持久化） */
+  outlineCollapsed: boolean
+  setOutlineCollapsed: (v: boolean) => void
   setPanelDock: (p: PanelId, d: DockSide) => void
   setPanelSize: (p: PanelId, px: number) => void
   setZoneSize: (d: DockSide, px: number) => void
@@ -142,6 +164,8 @@ export const useStore = create<StoreState>()(
         const s = get()
         return { past: s.ir ? [...s.past, s.ir].slice(-HISTORY_CAP) : s.past, future: [] }
       }
+      /** 方向键微调的去抖时间戳（nudgeBy 用，800ms 内连按合并撤销） */
+      let lastArrowNudge = 0
       return {
         code: sampleSrc,
         ir: null,
@@ -158,6 +182,25 @@ export const useStore = create<StoreState>()(
         zoom: 1,
         setZoom: (z) => set({ zoom: Math.min(2, Math.max(0.2, Math.round(z * 100) / 100)) }),
         clipboard: null,
+        pasteArmed: false,
+        setPasteArmed: (v) => set({ pasteArmed: v }),
+        nudgePath: null,
+        setNudge: (p) => set({ nudgePath: p }),
+        nudgeBy: (dx, dy) => {
+          const s = get()
+          if (!s.ir || !s.nudgePath) return
+          const node = getNodeAtPath(s.ir.root, s.nudgePath)
+          if (!node) return
+          const off = getModifier(node, 'offset')?.args[0]
+          const obj = off && off.t === 'obj' ? off.v : undefined
+          const bx = obj?.x && obj.x.t === 'num' ? obj.x.v : 0
+          const by = obj?.y && obj.y.t === 'num' ? obj.y.v : 0
+          // 连按（<800ms）合并为一步撤销，避免方向键微调刷爆撤销栈
+          const now = Date.now()
+          const history = now - lastArrowNudge > 800
+          lastArrowNudge = now
+          s.mutateNode(s.nudgePath, n => setModifier(n, 'offset', [{ t: 'obj', v: { x: { t: 'num', v: bx + dx }, y: { t: 'num', v: by + dy } } }]), { history })
+        },
         stylesTable: { styles: {}, extends: {} },
         components: {},
         builders: {},
@@ -169,9 +212,15 @@ export const useStore = create<StoreState>()(
         navStack: [],
         interactive: false,
         fitMode: true,
+        systemBars: true,
+        setSystemBars: (v) => set({ systemBars: v }),
         layoutDocks: { ...DEFAULT_DOCKS },
         panelSize: { ...DEFAULT_PANEL_SIZE },
         zoneSize: { ...DEFAULT_ZONE },
+        outlineWidth: DEFAULT_OUTLINE_WIDTH,
+        setOutlineWidth: (px) => set({ outlineWidth: Math.round(Math.min(560, Math.max(160, px))) }),
+        outlineCollapsed: false,
+        setOutlineCollapsed: (v) => set({ outlineCollapsed: v }),
         setPanelDock: (p, d) => set({ layoutDocks: { ...get().layoutDocks, [p]: d } }),
         setPanelSize: (p, px) => set({ panelSize: { ...get().panelSize, [p]: Math.round(px) } }),
         setZoneSize: (d, px) => set({ zoneSize: { ...get().zoneSize, [d]: Math.round(px) } }),
@@ -231,12 +280,40 @@ export const useStore = create<StoreState>()(
           const s = get()
           if (!s.ir) return
           const node = getNodeAtPath(s.ir.root, path)
-          if (node) set({ clipboard: JSON.parse(JSON.stringify(node)) })
+          // 复制即进入粘贴模式：之后点击容器/组件即可粘贴，可连续多处
+          if (node) set({ clipboard: JSON.parse(JSON.stringify(node)), pasteArmed: true })
         },
         cutNode: (path) => {
           if (path.length === 0) return
           get().copyNode(path)
           get().removeNode(path)
+        },
+        pasteAt: (target) => {
+          const s = get()
+          if (!s.ir || !s.clipboard) return
+          const clip: IRNode = JSON.parse(JSON.stringify(s.clipboard))
+          const node = getNodeAtPath(s.ir.root, target)
+          if (!node) return
+          // 容器：放入内部末尾（独子已满自动下钻内层容器）
+          if (CONTAINER_TYPES.has(node.type)) {
+            const d = descendFullSingleChild(node, target)
+            if (acceptsChild(d.node.type, clip.type) && canAcceptMore(d.node)) {
+              s.insertChild(d.path, clip, d.node.children.length)
+              return
+            }
+          }
+          // 叶子（或容器不接收）：放到该节点之后
+          if (target.length === 0) {
+            if (acceptsChild(s.ir.root.type, clip.type) && canAcceptMore(s.ir.root)) {
+              s.insertChild([], clip, s.ir.root.children.length)
+            }
+            return
+          }
+          const pp = target.slice(0, -1)
+          const pnode = getNodeAtPath(s.ir.root, pp)
+          if (pnode && acceptsChild(pnode.type, clip.type) && canAcceptMore(pnode)) {
+            s.insertChild(pp, clip, target[target.length - 1] + 1)
+          }
         },
         pasteNode: () => {
           const s = get()
@@ -275,7 +352,7 @@ export const useStore = create<StoreState>()(
             const cur = get().ir
             const keep = !!opts?.keepHistory && !!cur
             set({
-              code: c, ir, error: null, selectedPath: null, dropTarget: null,
+              code: c, ir, error: null, selectedPath: null, dropTarget: null, nudgePath: null, pasteArmed: false,
               files,
               stylesTable: extractStyles(ir),
               // 同文件组件 + import 解析到的跨文件组件（解析缓存保证编辑当前页时不重解整个工程）
@@ -287,7 +364,7 @@ export const useStore = create<StoreState>()(
             })
           } catch (e: any) {
             // 解析失败保留最后一次成功的 IR：画布不闪白，错误由代码窗横幅展示原因
-            set({ code: c, error: String(e?.message || e), selectedPath: null, dropTarget: null, past: [], future: [], files, methodRoutes: {} })
+            set({ code: c, error: String(e?.message || e), selectedPath: null, dropTarget: null, nudgePath: null, pasteArmed: false, past: [], future: [], files, methodRoutes: {} })
           }
         },
         setDevice: (m) => set({ deviceModel: m }),
@@ -295,7 +372,8 @@ export const useStore = create<StoreState>()(
         setSelected: (p) => set({ selectedPath: p }),
         setDropTarget: (d) => {
           const cur = get().dropTarget
-          if (cur && d && samePath(cur.path, d.path) && cur.pos === d.pos &&
+          // 注意必须比对 index：画布「最近子位置」插入会让同一 path+pos 的 index 随指针变化
+          if (cur && d && samePath(cur.path, d.path) && cur.pos === d.pos && cur.index === d.index &&
             cur.at?.x === d.at?.x && cur.at?.y === d.at?.y) return
           set({ dropTarget: d })
         },
@@ -312,7 +390,7 @@ export const useStore = create<StoreState>()(
           if (!s.ir) return
           const root = removeNodeAtPath(s.ir.root, path)
           const ir = { ...s.ir, root }
-          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: null })
+          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: null, nudgePath: null })
         },
         insertChild: (parent, child, index) => {
           const s = get()
@@ -322,7 +400,7 @@ export const useStore = create<StoreState>()(
           const root = insertChildAtPath(s.ir.root, parent, child, index)
           const ir = { ...s.ir, root }
           const at = Math.max(0, Math.min(index, oldLen))
-          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: [...parent, at], dropTarget: null })
+          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: [...parent, at], dropTarget: null, nudgePath: null })
         },
         moveNode: (from, toParent, index) => {
           const s = get()
@@ -339,7 +417,7 @@ export const useStore = create<StoreState>()(
           const root = insertChildAtPath(removed, toParent, node, idx)
           const ir = { ...s.ir, root }
           const at = Math.max(0, Math.min(idx, oldLen))
-          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: [...toParent, at], dropTarget: null })
+          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: [...toParent, at], dropTarget: null, nudgePath: null })
         },
         contextMenu: null,
         openContextMenu: (x, y, path) => set({ contextMenu: { x, y, path } }),
@@ -367,7 +445,7 @@ export const useStore = create<StoreState>()(
             return { ...p, children }
           })
           const ir = { ...s.ir, root }
-          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: [...parentPath, to] })
+          set({ ...pushPast(), ir, code: serialize(ir), selectedPath: [...parentPath, to], nudgePath: null })
         },
         wrapNode: (path, containerType) => {
           const s = get()
@@ -377,7 +455,7 @@ export const useStore = create<StoreState>()(
           const wrapper: IRNode = { type: containerType, ctorArgs: [], children: [node], modifiers: [] }
           const root = updateNodeAtPath(s.ir.root, path, () => wrapper)
           const ir = { ...s.ir, root }
-          set({ ...pushPast(), ir, code: serialize(ir) })
+          set({ ...pushPast(), ir, code: serialize(ir), nudgePath: null })
         },
         undo: () => {
           const s = get()
@@ -390,6 +468,8 @@ export const useStore = create<StoreState>()(
             code: serialize(prev),
             selectedPath: null,
             dropTarget: null,
+            nudgePath: null,
+            pasteArmed: false,
           })
         },
         redo: () => {
@@ -403,6 +483,8 @@ export const useStore = create<StoreState>()(
             code: serialize(next),
             selectedPath: null,
             dropTarget: null,
+            nudgePath: null,
+            pasteArmed: false,
           })
         },
         bumpDeviceVersion: () => set({ deviceVersion: get().deviceVersion + 1 }),
@@ -416,13 +498,45 @@ export const useStore = create<StoreState>()(
     {
       name: 'arkts-viz-v1',
       storage: createJSONStorage(() => safeStorage),
+      // v2：大纲树移出停靠系统（改为贴左区右侧的固定全高条），顶部停靠下线。
+      // 规范化持久化布局：三面板仅允许 left/right/bottom（top 等非法值回默认），
+      // 丢弃 outline 面板键与 top 区尺寸；用户自定义过的合法布局保持不变。
+      version: 2,
+      migrate: (persisted, version) => {
+        const s = persisted as {
+          layoutDocks?: Record<string, string>
+          panelSize?: Record<string, number>
+          zoneSize?: Record<string, number>
+        }
+        if (version < 2 && s) {
+          const def: Record<PanelId, DockSide> = { nav: 'left', props: 'right', code: 'right' }
+          const docks = s.layoutDocks ?? {}
+          const norm = {} as Record<PanelId, DockSide>
+          for (const p of ['nav', 'props', 'code'] as PanelId[]) {
+            const d = docks[p]
+            norm[p] = d === 'left' || d === 'right' || d === 'bottom' ? d : def[p]
+          }
+          s.layoutDocks = norm
+          if (s.panelSize) {
+            const ps = s.panelSize
+            s.panelSize = { nav: ps.nav ?? 0, props: ps.props ?? 0, code: ps.code ?? 0 }
+          }
+          if (s.zoneSize) {
+            const zs = s.zoneSize
+            s.zoneSize = { left: zs.left ?? 240, right: zs.right ?? 460, bottom: zs.bottom ?? 260 }
+          }
+        }
+        return persisted as never
+      },
       // 持久化 code/设备/项目文件与媒体资源：undo 栈、选中态、剪贴簿等均不落盘
       partialize: (s) => ({
         code: s.code, deviceModel: s.deviceModel, fold: s.fold, showAids: s.showAids, zoom: s.zoom,
         files: s.files, currentFile: s.currentFile, media: s.media,
         resColors: s.resColors, resStrings: s.resStrings,
         navStack: s.navStack, interactive: s.interactive, fitMode: s.fitMode,
+        systemBars: s.systemBars,
         layoutDocks: s.layoutDocks, panelSize: s.panelSize, zoneSize: s.zoneSize,
+        outlineWidth: s.outlineWidth, outlineCollapsed: s.outlineCollapsed,
       }),
     },
   ),

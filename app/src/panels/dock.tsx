@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { useStore, DockSide, PanelId } from '../store/store'
 
-export const PANEL_TITLES: Record<PanelId, string> = { nav: '面板', outline: '大纲树', props: '属性', code: '代码' }
-const PANEL_ORDER: PanelId[] = ['nav', 'outline', 'props', 'code']
+export const PANEL_TITLES: Record<PanelId, string> = { nav: '面板', props: '属性', code: '代码' }
+const PANEL_ORDER: PanelId[] = ['nav', 'props', 'code']
 
 /** 指针轴向拖拽：onDelta 收到相对按下点的累计 px 增量；松手/取消自动解绑 */
-function startAxisDrag(e: React.PointerEvent, axis: 'x' | 'y', onDelta: (d: number) => void) {
+export function startAxisDrag(e: React.PointerEvent, axis: 'x' | 'y', onDelta: (d: number) => void) {
   e.preventDefault()
   e.stopPropagation()
   const start = axis === 'x' ? e.clientX : e.clientY
@@ -40,7 +40,7 @@ export function DockBox({ id, side, children }: { id: PanelId; side: DockSide; c
       <div
         className="dock-head"
         onContextMenu={(e) => { e.preventDefault(); useStore.getState().openDockMenu(e.clientX, e.clientY, id) }}
-        title="右键：选择停靠位置（左 / 右 / 顶 / 底）"
+        title="右键：选择停靠位置（左 / 右 / 底）"
       >
         <span>{PANEL_TITLES[id]}</span>
         <span className="dock-head-hint">⋮⋮</span>
@@ -62,7 +62,7 @@ export function DockBox({ id, side, children }: { id: PanelId; side: DockSide; c
   )
 }
 
-/** 停靠区（屏幕四边之一）：盛放该区全部面板 + 区缘尺寸把手；无面板停靠时不渲染 */
+/** 停靠区（左/右/底三边之一）：盛放该区全部面板 + 区缘尺寸把手；无面板停靠时不渲染 */
 export function DockZone({ side, renderPanel }: { side: DockSide; renderPanel: (p: PanelId) => React.ReactNode }) {
   const docks = useStore(s => s.layoutDocks)
   const size = useStore(s => s.zoneSize[side])
@@ -70,8 +70,8 @@ export function DockZone({ side, renderPanel }: { side: DockSide; renderPanel: (
   const panels = PANEL_ORDER.filter(p => docks[p] === side)
   if (panels.length === 0) return null
   const vertical = side === 'left' || side === 'right'
-  // 把手在内缘：左/上区拖拽正向放大，右/下区反向
-  const sign = side === 'left' || side === 'top' ? 1 : -1
+  // 把手在内缘：左区拖拽正向放大，右/下区反向
+  const sign = side === 'left' ? 1 : -1
   const max = vertical ? Math.min(900, window.innerWidth - 320) : Math.min(700, window.innerHeight - 260)
   const handle = (
     <div
@@ -88,7 +88,38 @@ export function DockZone({ side, renderPanel }: { side: DockSide; renderPanel: (
       <div className="dock-zone-inner" style={{ flexDirection: vertical ? 'column' : 'row' }}>
         {panels.map(p => <DockBox key={p} id={p} side={side}>{renderPanel(p)}</DockBox>)}
       </div>
-      {(side === 'left' || side === 'top') && handle}
+      {side === 'left' && handle}
+    </div>
+  )
+}
+
+/** 大纲树专用条：固定全高、贴着左停靠区右侧（不参与四边停靠），宽度可拖；首部 « 收合成窄条 */
+export function OutlineStrip({ children }: { children: React.ReactNode }) {
+  const width = useStore(s => s.outlineWidth)
+  const setOutlineWidth = useStore(s => s.setOutlineWidth)
+  const collapsed = useStore(s => s.outlineCollapsed)
+  const setCollapsed = useStore(s => s.setOutlineCollapsed)
+  if (collapsed) {
+    // 收合态：窄条（点击任意处展开），竖排标签 + 顶部 » 按钮
+    return (
+      <div className="outline-rail" title="展开大纲树" onClick={() => setCollapsed(false)}>
+        <button className="outline-rail-btn" onClick={(e) => { e.stopPropagation(); setCollapsed(false) }}>»</button>
+        <span className="outline-rail-label">大纲树</span>
+      </div>
+    )
+  }
+  return (
+    <div className="dock-box outline-strip" style={{ flex: '0 0 auto', width }}>
+      <div className="dock-head">
+        <span>大纲树</span>
+        <button className="outline-fold-btn" title="收合大纲树" onClick={() => setCollapsed(true)}>«</button>
+      </div>
+      <div className="dock-body">{children}</div>
+      <div
+        className="dock-size dock-size-r"
+        title="拖拽调整宽度"
+        onPointerDown={(e) => startAxisDrag(e, 'x', (d) => setOutlineWidth(width + d))}
+      />
     </div>
   )
 }
@@ -121,11 +152,10 @@ export function DockMenu() {
   const opts: { side: DockSide; label: string }[] = [
     { side: 'left', label: '停靠到左侧' },
     { side: 'right', label: '停靠到右侧' },
-    { side: 'top', label: '停靠到顶部' },
     { side: 'bottom', label: '停靠到底部' },
   ]
   const x = Math.min(menu.x, window.innerWidth - 180)
-  const y = Math.min(menu.y, window.innerHeight - 220)
+  const y = Math.min(menu.y, window.innerHeight - 190)
   return (
     <div className="ctx-menu" ref={ref} style={{ left: x, top: y }}>
       <div className="ctx-title">{PANEL_TITLES[menu.panel]} · 停靠位置</div>

@@ -96,7 +96,7 @@ function Palette({ query }: { query: string }) {
           </div>
         ))}
       </div>
-      <div className="palette-hint">拖入画布：边缘 30% = 前/后插入；中部 = 放入容器</div>
+      <div className="palette-hint">拖入画布/大纲树：容器中部 = 放入内部就近位置；边缘窄带 = 前/后插入</div>
     </div>
   )
 }

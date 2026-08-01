@@ -71,3 +71,57 @@ describe('computeDrop 独子容器重定向', () => {
     expect(root).toBeDefined()
   })
 })
+
+describe('computeDrop 画布模式（窄边带 + 最近子位置 + 约束回退）', () => {
+  afterEach(() => endDrag())
+
+  // fakeBox 高 40，axisSize 传 40：边带 = clamp(40*0.1, 6, 12) = 6px（ratio 0.15）
+
+  it('回归：拖到 Scroll 盒下部留白（命中 Scroll 本体）→ 进内层 Column，不再落到 Scroll 外', () => {
+    startNewDrag('Text')
+    const d = computeDrop(scrollTree(), [0], 0.8, fakeBox, 50, 32, true, 40)
+    expect(d).not.toBeNull()
+    expect(d!.pos).toBe('inside')
+    expect(d!.parent).toEqual([0, 0]) // Scroll 的内层 Column
+    expect(d!.index).toBe(1) // 无 DOM 环境 → 追加末尾
+  })
+
+  it('画布拖到 Scroll 顶沿窄带内 → before 兄弟插入（故意的边缘操作仍可用）', () => {
+    startNewDrag('Text')
+    const d = computeDrop(scrollTree(), [0], 0.05, fakeBox, 50, 2, true, 40)
+    expect(d).toMatchObject({ pos: 'before', parent: [], index: 0 })
+    const after = computeDrop(scrollTree(), [0], 0.95, fakeBox, 50, 38, true, 40)
+    expect(after).toMatchObject({ pos: 'after', parent: [], index: 1 })
+  })
+
+  it('拖到 Scroll 内层 Column 上沿（before 被独子约束拒绝）→ 回退 inside 进 Column', () => {
+    startNewDrag('Text')
+    const d = computeDrop(scrollTree(), [0, 0], 0.05, fakeBox, 50, 2, true, 40)
+    expect(d).not.toBeNull()
+    expect(d!.pos).toBe('inside')
+    expect(d!.parent).toEqual([0, 0])
+  })
+
+  it('根即 Scroll（独子已满）：拖到顶层 Column 上沿 → 回退 inside，不产生非法第二根子级', () => {
+    const root: IRNode = { type: 'Scroll', ctorArgs: [], children: [column([text('a')])], modifiers: [] }
+    startNewDrag('Text')
+    const d = computeDrop(root, [0], 0.05, fakeBox, 50, 2, true, 40)
+    expect(d).not.toBeNull()
+    expect(d).toMatchObject({ pos: 'inside', parent: [0] })
+  })
+
+  it('画布约束仍生效：List 只收 ListItem，拖 Text 到 List 中部 → null', () => {
+    const root = column([{ type: 'List', ctorArgs: [], children: [], modifiers: [] }])
+    startNewDrag('Text')
+    expect(computeDrop(root, [0], 0.5, fakeBox, 50, 20, true, 40)).toBeNull()
+  })
+
+  it('画布叶子节点保持 50% 前后分带（不受容器窄边带影响）', () => {
+    const root = column([text('a'), text('b')])
+    startNewDrag('Text')
+    const before = computeDrop(root, [0], 0.4, fakeBox, 50, 16, true, 40)
+    expect(before).toMatchObject({ pos: 'before', parent: [], index: 0 })
+    const after = computeDrop(root, [0], 0.6, fakeBox, 50, 24, true, 40)
+    expect(after).toMatchObject({ pos: 'after', parent: [], index: 1 })
+  })
+})

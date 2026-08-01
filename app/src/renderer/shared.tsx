@@ -3,6 +3,7 @@ import { ArgVal, IRFile, IRNode, IRState, Modifier } from '../ir/types'
 import { numModifier, Path } from '../ir/mutate'
 import { startResize } from './resize'
 import { DropTarget, beginMaybeMove } from '../editor/dnd'
+import { CONTAINER_TYPES } from '../registry'
 import { useStore } from '../store/store'
 
 /** 打开节点右键菜单（模块内便捷调用，避免每处重复 getState） */
@@ -123,15 +124,20 @@ export function resolveMediaRef(a: ArgVal | undefined, media: Record<string, str
   }
   return undefined
 }
-export function box(a: ArgVal | undefined): string | undefined {
+export function box(a: ArgVal | undefined, states: IRState[] = []): string | undefined {
   if (!a) return undefined
   if (a.t === 'num') return `${vp(a.v)}px`
   if (a.t === 'obj') {
     const o = a.v
-    const top = num(o.top) ?? 0
-    const right = num(o.right) ?? num(o.horizontal) ?? 0
-    const bottom = num(o.bottom) ?? 0
-    const left = num(o.left) ?? num(o.horizontal) ?? 0
+    // 求值感知：raw 一元表达式（如负值 -10）经 evalExpr 取数
+    const numF = (x: ArgVal | undefined): number | undefined => {
+      if (x && x.t === 'raw') { const v = evalExpr(x.v, states); return v && v.t === 'num' ? v.v : undefined }
+      return num(x)
+    }
+    const top = numF(o.top) ?? 0
+    const right = numF(o.right) ?? numF(o.horizontal) ?? 0
+    const bottom = numF(o.bottom) ?? 0
+    const left = numF(o.left) ?? numF(o.horizontal) ?? 0
     return `${vp(top)}px ${vp(right)}px ${vp(bottom)}px ${vp(left)}px`
   }
   return undefined
@@ -240,8 +246,8 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
     switch (m.name) {
       case 'width': s.width = lenE(a0); break
       case 'height': s.height = lenE(a0); break
-      case 'padding': s.padding = box(a0); break
-      case 'margin': if (!noMargin) s.margin = box(a0); break
+      case 'padding': s.padding = box(a0, states); break
+      case 'margin': if (!noMargin) s.margin = box(a0, states); break
       case 'backgroundColor': s.backgroundColor = colorE(a0); break
       case 'fontSize': if (numE(a0) != null) s.fontSize = vp(numE(a0)!); break
       case 'font': {
@@ -299,35 +305,36 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
         break
       // —— 通用布局/定位属性 ——
       case 'position': {
-        // 绝对定位（相对父级）：.position({ x, y })
-        const x = a0 && a0.t === 'obj' ? num(a0.v.x) : undefined
-        const y = a0 && a0.t === 'obj' ? num(a0.v.y) : undefined
+        // 绝对定位（相对父级）：.position({ x, y })，x/y 支持数值 vp、百分比字符串与负数
+        const x = a0 && a0.t === 'obj' ? lenE(a0.v.x) : undefined
+        const y = a0 && a0.t === 'obj' ? lenE(a0.v.y) : undefined
         s.position = 'absolute'
-        if (x != null) s.left = vp(x)
-        if (y != null) s.top = vp(y)
+        if (x != null) s.left = x
+        if (y != null) s.top = y
         break
       }
       case 'offset': {
-        // 相对自身布局位置的偏移：.offset({ x, y })
-        const x = a0 && a0.t === 'obj' ? num(a0.v.x) : undefined
-        const y = a0 && a0.t === 'obj' ? num(a0.v.y) : undefined
-        tf.push(`translate(${vp(x ?? 0)}px, ${vp(y ?? 0)}px)`)
+        // 相对自身布局位置的偏移：.offset({ x, y })（百分比相对组件自身宽高，与 CSS translate 一致）
+        const x = a0 && a0.t === 'obj' ? lenE(a0.v.x) : undefined
+        const y = a0 && a0.t === 'obj' ? lenE(a0.v.y) : undefined
+        const px = (v: string | number | undefined) => (typeof v === 'number' ? `${v}px` : (v ?? 0))
+        if (x != null || y != null) tf.push(`translate(${px(x)}, ${px(y)})`)
         break
       }
       case 'translate': {
-        const x = a0 && a0.t === 'obj' ? num(a0.v.x) : undefined
-        const y = a0 && a0.t === 'obj' ? num(a0.v.y) : undefined
-        tf.push(`translate(${vp(x ?? 0)}px, ${vp(y ?? 0)}px)`)
+        const x = a0 && a0.t === 'obj' ? numE(a0.v.x) : undefined
+        const y = a0 && a0.t === 'obj' ? numE(a0.v.y) : undefined
+        if (x != null || y != null) tf.push(`translate(${vp(x ?? 0)}px, ${vp(y ?? 0)}px)`)
         break
       }
       case 'rotate': {
         // .rotate({ x, y, z, angle }) → rotate3d；仅 angle → rotate
         if (a0 && a0.t === 'obj') {
-          const ang = num(a0.v.angle)
+          const ang = numE(a0.v.angle)
           if (ang != null) {
-            const rx = num(a0.v.x) ?? 0
-            const ry = num(a0.v.y) ?? 0
-            const rz = num(a0.v.z) ?? 0
+            const rx = numE(a0.v.x) ?? 0
+            const ry = numE(a0.v.y) ?? 0
+            const rz = numE(a0.v.z) ?? 0
             tf.push(rx || ry || rz ? `rotate3d(${rx}, ${ry}, ${rz || 1}, ${ang}deg)` : `rotate(${ang}deg)`)
           }
         }
@@ -335,8 +342,8 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
       }
       case 'scale': {
         if (a0 && a0.t === 'obj') {
-          const sx = num(a0.v.x)
-          const sy = num(a0.v.y)
+          const sx = numE(a0.v.x)
+          const sy = numE(a0.v.y)
           if (sx != null || sy != null) tf.push(`scale(${sx ?? 1}, ${sy ?? sx ?? 1})`)
         }
         break
@@ -375,9 +382,9 @@ export function styleOf(node: IRNode, noMargin = false, states: IRState[] = [], 
         // .shadow({ radius, color, offsetX, offsetY })
         if (a0 && a0.t === 'obj') {
           const o = a0.v
-          const r = num(o.radius) ?? 10
-          const ox = num(o.offsetX) ?? 0
-          const oy = num(o.offsetY) ?? 0
+          const r = numE(o.radius) ?? 10
+          const ox = numE(o.offsetX) ?? 0
+          const oy = numE(o.offsetY) ?? 0
           const c = colorE(o.color) ?? 'rgba(0,0,0,0.3)'
           s.boxShadow = `${vp(ox)}px ${vp(oy)}px ${vp(r)}px ${c}`
         }
@@ -576,13 +583,36 @@ export interface Frame {
   style: CSSProperties
 }
 
+/** 显式尺寸类修饰符：容器带这些修饰符即「有大小」，可为 position 子节点提供包含块 */
+const SIZING_MODS: ReadonlySet<string> = new Set([
+  'width', 'height', 'size', 'constraintSize', 'layoutWeight', 'aspectRatio', 'flexGrow', 'flexBasis',
+])
+
+/**
+ * 塌缩容器判定：容器无显式尺寸且全部子节点出流（均带 .position）时，容器渲染为 0×0。
+ * 此时不为它建立定位包含块——position 子节点沿祖先上溯到有大小的容器定位，
+ * 与真机 ArkUI 行为一致（否则 220% 之类的百分比尺寸会按 0 宽解析、锚点也错）。
+ */
+export function wouldCollapse(node: IRNode): boolean {
+  if (!CONTAINER_TYPES.has(node.type)) return false
+  if (node.children.length === 0) return false
+  if (node.modifiers.some(m => SIZING_MODS.has(m.name))) return false
+  return node.children.every(c => c.modifiers.some(m => m.name === 'position'))
+}
+
 /** 与现有 7 种组件完全一致的选中高亮 / 尺寸把手 / 落点指示框架 */
 export function frameOf(node: IRNode, path: Path, ctx: RenderCtx, noMargin = false): Frame {
   const sel = eqPath(ctx.selectedPath, path)
   const onClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    // 交互预览模式：命中 router 导航（内联或 this.method 间接调用）时执行页面跳转，不做选中
     const st = useStore.getState()
+    // 粘贴模式：点击 = 剪贴簿组件放进容器内部 / 放到其后（不选中）。
+    // 限定画布（.phone-screen）内：模板缩略图同用 renderNode，点击缩略图不触发粘贴。
+    if (st.pasteArmed && st.clipboard && (e.currentTarget as HTMLElement).closest?.('.phone-screen')) {
+      st.pasteAt(path)
+      return
+    }
+    // 交互预览模式：命中 router 导航（内联或 this.method 间接调用）时执行页面跳转，不做选中
     if (st.interactive) {
       const act = routerActionOf(node, st.methodRoutes)
       if (act) {
@@ -605,11 +635,22 @@ export function frameOf(node: IRNode, path: Path, ctx: RenderCtx, noMargin = fal
       openContextMenu(e.clientX, e.clientY, path)
     },
   }
-  const selStyle: CSSProperties = sel || dropPos ? { position: 'relative' } : {}
+  // 选中/落点高亮只加 outline，绝不动 position：布局必须不随选中态变化（真机语义）
+  const selStyle: CSSProperties = {}
   if (sel) { selStyle.outline = '2px solid #3a6df0'; selStyle.outlineOffset = '-2px' }
+  // 「位置调整」模式：橙色虚线框 + 移动光标，提示拖拽只改偏移不动结构
+  const nudge = useStore.getState().nudgePath
+  if (nudge && eqPath(nudge, path)) {
+    selStyle.outline = '2px dashed #f59e0b'
+    selStyle.outlineOffset = '-2px'
+    selStyle.cursor = 'move'
+  }
   const handles = sel ? handlesFor(node, path) : []
   const indicator = dropIndicator(dropPos)
   const style = { ...styleOf(node, noMargin, ctx.states, ctx.styles, ctx.extends, ctx.res), ...selStyle }
+  // 定位包含块基线：非塌缩节点一律 relative（ArkUI 中 .position 相对父组件）。
+  // 塌缩容器保持 static，其 position 子节点按 CSS 原生语义上溯到有大小的祖先。
+  if (!style.position && !wouldCollapse(node)) style.position = 'relative'
   return { sel, dropPos, common, handles, indicator, style }
 }
 

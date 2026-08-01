@@ -1,12 +1,12 @@
 import { useStore } from '../store/store'
 import { getNodeAtPath, samePath, setModifier, Path } from '../ir/mutate'
-import { acceptsChild, canAcceptMore } from '../ir/constraints'
+import { acceptsChild, canAcceptMore, descendFullSingleChild } from '../ir/constraints'
 import { CONTAINER_TYPES } from '../registry'
 import { IRNode } from '../ir/types'
 import { createNode } from '../ir/defaults'
 
 // 约束定义已迁至 registry（元件注册表）；此处再导出保持既有引用可用
-export { acceptsChild, canAcceptMore, SINGLE_CHILD } from '../ir/constraints'
+export { acceptsChild, canAcceptMore, SINGLE_CHILD, descendFullSingleChild } from '../ir/constraints'
 
 export type DropPos = 'before' | 'inside' | 'after'
 export interface DropTarget { path: Path; pos: DropPos; parent: Path; index: number; at?: { x: number; y: number } }
@@ -79,9 +79,11 @@ function drawGuides(box: DOMRect, vx?: number, hy?: number) {
   }
 }
 
-/** 画布元素按 path 查找（data-path 由 renderer 写入，root 为空串） */
+/** 画布元素按 path 查找（data-path 由 renderer 写入，root 为空串）。
+ *  必须限定 .phone-screen 范围：模板缩略图（TemplateThumb）也用 renderNode 渲染，
+ *  带同样的 data-path——不限定范围会命中缩略图，导致拖拽吸附/落点解析到错误元素。 */
 function elOf(path: Path): HTMLElement | null {
-  return document.querySelector(`[data-path="${path.join('.')}"]`)
+  return document.querySelector(`.phone-screen [data-path="${path.join('.')}"]`)
 }
 
 /** 候选对齐线（屏幕 px）：容器边缘/中线 + 各兄弟矩形的左中右 / 上中下 */
@@ -186,7 +188,7 @@ export function endDrag() {
   useStore.getState().setDropTarget(null)
 }
 
-let pending: { path: Path; x: number; y: number } | null = null
+let pending: { path: Path; x: number; y: number; fromTree: boolean } | null = null
 let pendingBound = false
 
 function attachPending() {
@@ -201,10 +203,10 @@ function detachPending() {
   window.removeEventListener('pointerup', onMaybeUp)
 }
 
-export function beginMaybeMove(path: Path, e: React.PointerEvent) {
+export function beginMaybeMove(path: Path, e: React.PointerEvent, fromTree = false) {
   e.stopPropagation()
   if (e.button !== 0) return // 仅左键可拖：右键按下留给上下文菜单，避免右键滑动误起拖拽
-  pending = { path, x: e.clientX, y: e.clientY }
+  pending = { path, x: e.clientX, y: e.clientY, fromTree }
   attachPending()
 }
 
@@ -214,8 +216,11 @@ function onMaybeMove(e: PointerEvent) {
   const dx = e.clientX - pending.x
   const dy = e.clientY - pending.y
   if (dx * dx + dy * dy < 25) return
-  const path = pending.path
-  const alt = e.altKey
+  const { path, fromTree } = pending
+  // 画布「位置调整」模式（右键菜单开启）：拖拽该节点只改 .offset，不动结构；
+  // 大纲树发起的拖拽保持结构化移动（树是结构编辑中枢）
+  const nudge = useStore.getState().nudgePath
+  const alt = e.altKey || (!fromTree && !!nudge && samePath(nudge, path))
   const sx = pending.x
   const sy = pending.y
   pending = null
@@ -228,36 +233,70 @@ function onMaybeUp() {
   detachPending()
 }
 
-/** 计算落点（画布与大纲树共用）：bands 判定 before/inside/after 并做约束校验；snap 仅画布开启（Stack 指针吸附） */
-export function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clientX: number, clientY: number, snap: boolean): DropTarget | null {
+/**
+ * 计算落点（画布与大纲树共用）。
+ * 大纲树（canvas=false）：行上 20%/20% 比例带判定 before/inside/after（中部 60% 进容器）。
+ * 画布（canvas=true）：容器的 before/after 收窄为 ~10px 像素边带（沿分带轴），其余一律
+ * 按 inside 解析（独子容器自动下钻，插入位取指针越过的最近子节点之后）——
+ * 大容器（Scroll 等）内容不填满盒时，30% 比例带会把「想放进容器」误判成「放到容器外」。
+ * 画布 before/after 被约束拒绝时回退按 inside 解析（如 Scroll 内层 Column 的上下沿）。
+ * axisSize = 分带轴上的盒尺寸 px（画布调用方按父容器主轴传入，Row 父取宽、其余取高）。
+ */
+export function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRect, clientX: number, clientY: number, canvas: boolean, axisSize?: number): DropTarget | null {
   const node = getNodeAtPath(root, path)
   if (!node) return null
   const parentPath = path.slice(0, -1)
-  const parent = parentPath.length ? getNodeAtPath(root, parentPath) : null
-  const band = 0.3
+  // parentPath=[] 时父级即根节点自身：顶层 before/after = 根内插入，同样要过约束
+  const parent = getNodeAtPath(root, parentPath) ?? null
   let pos: DropPos
   if (path.length === 0) pos = 'inside'
-  else if (CONTAINERS.has(node.type)) pos = ratio < band ? 'before' : ratio > 1 - band ? 'after' : 'inside'
-  else pos = ratio < 0.5 ? 'before' : 'after'
-  let targetPath = pos === 'inside' ? path : parentPath
-  const last = path.length ? path[path.length - 1] : 0
-  let idx = pos === 'inside' ? node.children.length : pos === 'before' ? last : last + 1
-  let containerNode = pos === 'inside' ? node : parent
-  // 独子容器（Scroll/TabContent/Badge）已有独子且独子是容器 → 自动深入该子容器：
-  // 拖 Text 到 Scroll 行中部 = 放进它内层的 Column，符合「Scroll 里装东西」的直觉
-  if (pos === 'inside') {
-    const d = descendFullSingleChild(node, path)
-    containerNode = d.node
-    targetPath = d.path
-    idx = containerNode.children.length
+  else if (CONTAINERS.has(node.type)) {
+    if (!canvas) {
+      // 大纲树：before/after 收窄为 20% 边带，中部 60% 一律 inside——
+      // 拖「进」容器是树内最高频意图，边带只留给故意的兄弟插入
+      pos = ratio < 0.2 ? 'before' : ratio > 0.8 ? 'after' : 'inside'
+    } else {
+      const size = axisSize ?? box.height ?? 1
+      const off = Math.min(Math.max(ratio, 0), 1) * size
+      const edge = Math.max(6, Math.min(12, size * 0.1))
+      pos = off < edge ? 'before' : off > size - edge ? 'after' : 'inside'
+    }
+  } else {
+    pos = ratio < 0.5 ? 'before' : 'after'
   }
-  // 子类型约束 + 独子约束（同父搬运不增加子数，跳过独子检查）
-  if (containerNode) {
+
+  /** pos → 目标父容器与插入下标（inside：独子下钻 + 画布最近子位置） */
+  const resolve = (p: DropPos): { targetPath: Path; container: IRNode | null; index: number } => {
+    if (p === 'inside') {
+      const d = descendFullSingleChild(node, path)
+      let index = d.node.children.length
+      // Stack 以 .position 定位，新子节点固定压栈顶；其余容器按指针位置就近插入
+      if (canvas && d.node.type !== 'Stack') index = nearestChildIndex(d.node, d.path, clientX, clientY)
+      return { targetPath: d.path, container: d.node, index }
+    }
+    const last = path[path.length - 1]
+    return { targetPath: parentPath, container: parent, index: p === 'before' ? last : last + 1 }
+  }
+  /** 子类型约束 + 独子约束（同父搬运不增加子数，跳过独子检查） */
+  const legal = (container: IRNode | null, targetPath: Path): boolean => {
+    if (!container) return false
     const childType = draggedType(root)
-    if (childType && !acceptsChild(containerNode.type, childType)) return null
+    if (childType && !acceptsChild(container.type, childType)) return false
     const sameParentMove = ctx?.kind === 'move' && !!ctx.path && samePath(ctx.path.slice(0, -1), targetPath)
-    if (!sameParentMove && !canAcceptMore(containerNode)) return null
+    if (!sameParentMove && !canAcceptMore(container)) return false
+    return true
   }
+
+  let r = resolve(pos)
+  // 画布宽容回退：before/after 被约束拒绝（如 Scroll 内层 Column 的上下沿）时改按 inside
+  if (canvas && pos !== 'inside' && !legal(r.container, r.targetPath)) {
+    pos = 'inside'
+    r = resolve(pos)
+  }
+  if (!legal(r.container, r.targetPath)) return null
+  const targetPath = r.targetPath
+  const containerNode = r.container
+
   // Stack 自由定位：inside 落点记录指针坐标（vp），落下时写入子节点 .position({x,y})
   let at: { x: number; y: number } | undefined
   if (pos === 'inside' && containerNode?.type === 'Stack') {
@@ -267,7 +306,7 @@ export function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRec
       const k = pxPerVp()
       let px = clientX
       let py = clientY
-      if (snap) {
+      if (canvas) {
         // 指针吸附到兄弟/容器的边缘与中线（±SNAP_VP），并绘制参考线
         const sibBoxes = containerNode.children
           .map((_, i) => elOf([...targetPath, i]))
@@ -284,7 +323,24 @@ export function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRec
     }
   }
   // 落点高亮跟随最终目标：重定向进内层容器时，高亮内层行而非 Scroll 行
-  return { path: pos === 'inside' ? targetPath : path, pos, parent: targetPath, index: idx, at }
+  return { path: pos === 'inside' ? targetPath : path, pos, parent: targetPath, index: r.index, at }
+}
+
+/**
+ * 画布 inside 落点的精确插入位：沿容器主轴（Row 取 x，其余取 y），
+ * 插在指针越过的最后一个可见子节点之后。未渲染/隐藏子节点（If 假分支、非当前 Tab）跳过。
+ */
+function nearestChildIndex(container: IRNode, path: Path, x: number, y: number): number {
+  if (typeof document === 'undefined') return container.children.length // SSR/测试环境无 DOM
+  const horizontal = container.type === 'Row'
+  let idx = 0
+  for (let i = 0; i < container.children.length; i++) {
+    const r = elOf([...path, i])?.getBoundingClientRect()
+    if (!r || (r.width === 0 && r.height === 0)) continue
+    const mid = horizontal ? r.left + r.width / 2 : r.top + r.height / 2
+    if ((horizontal ? x : y) >= mid) idx = i + 1
+  }
+  return idx
 }
 
 function onMove(e: PointerEvent) {
@@ -350,8 +406,9 @@ function onMoveInner(e: PointerEvent) {
     s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY, false))
     return
   }
-  // 画布落点
-  const el = els.find(x => typeof x.hasAttribute === 'function' && x.hasAttribute('data-path'))
+  // 画布落点（限定 .phone-screen 内：模板缩略图同样带 data-path，
+  // 拖到模板/组件面板上时不能误解析成画布节点）
+  const el = els.find(x => typeof x.hasAttribute === 'function' && x.hasAttribute('data-path') && x.closest('.phone-screen'))
   if (!el) { s.setDropTarget(null); return }
   const pathStr = el.getAttribute('data-path') || ''
   const path: Path = pathStr === '' ? [] : pathStr.split('.').map(Number)
@@ -366,7 +423,7 @@ function onMoveInner(e: PointerEvent) {
   const ry = (e.clientY - box.top) / h
   const horizontal = parent?.type === 'Row'
   const ratio = horizontal ? rx : ry
-  s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY, true))
+  s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY, true, horizontal ? box.width : box.height))
 }
 
 function onUp() {
@@ -384,20 +441,6 @@ function isMoveValid(from: Path, toParent: Path): boolean {
   if (from.length === 0) return false
   if (toParent.length >= from.length && from.every((x, i) => x === toParent[i])) return false
   return true
-}
-
-/**
- * 独子容器（Scroll/TabContent/Badge）已满且独子是容器时下钻到最内层容器：
- * 拖拽落点重定向（computeDrop）与大纲树「＋」插入共用。
- */
-export function descendFullSingleChild(node: IRNode, path: Path): { node: IRNode; path: Path } {
-  let cur = node
-  let p = path
-  while (!canAcceptMore(cur) && cur.children.length === 1 && CONTAINERS.has(cur.children[0].type)) {
-    cur = cur.children[0]
-    p = [...p, 0]
-  }
-  return { node: cur, path: p }
 }
 
 /** 当前拖拽载荷的组件类型（新增=面板类型；搬运=被拖节点类型） */

@@ -32,8 +32,24 @@ body { background: #f0f2f5; color: #1f2329; }
   background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.18);
   overflow: hidden; position: relative;
 }
-.phone-screen { position: relative; overflow: hidden; user-select: none; background: #fff; }
+.phone-screen { position: relative; overflow: hidden; user-select: none; background: #fff; display: flex; flex-direction: column; }
 .phone-screen.interactive, .phone-screen.interactive * { cursor: pointer; }
+/* 应用区：系统栏开启时 = 屏幕减去状态栏/导航条（安全区），与真机非沉浸布局一致 */
+.app-area { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+/* 手机状态栏（30vp ≈ 18px）：左侧时间，右侧信号/Wi-Fi/电池图标 */
+.status-bar {
+  flex: 0 0 auto; height: 18px; padding: 0 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: #fff; color: #182431; position: relative; z-index: 5;
+}
+.status-bar .sb-time { font-size: 8.4px; font-weight: 700; letter-spacing: .2px; }
+.status-bar .sb-icons { display: flex; align-items: center; gap: 3px; color: #182431; }
+/* 底部手势导航条（20vp ≈ 12px） */
+.nav-bar {
+  flex: 0 0 auto; height: 12px; display: flex; align-items: center; justify-content: center;
+  background: #fff; position: relative; z-index: 5;
+}
+.nav-bar .nav-pill { width: 72px; height: 2.4px; border-radius: 2px; background: #182431; opacity: .8; }
 
 /* 页面导航栏（项目模式/交互预览时显示在画布右上） */
 .page-bar {
@@ -53,6 +69,26 @@ body { background: #f0f2f5; color: #1f2329; }
   color: #067647; background: #ecfdf3; border: 1px solid #a6f4c5;
   border-radius: 999px; padding: 1px 8px; font-size: 11px; flex: 0 0 auto;
 }
+
+/* 「位置调整」模式提示条（画布上方居中） */
+.nudge-bar {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 60;
+  display: flex; gap: 8px; align-items: center;
+  background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px;
+  padding: 4px 10px; box-shadow: 0 2px 8px rgba(16,24,40,.08);
+  font-size: 12px; color: #92400e; white-space: nowrap;
+}
+.nudge-bar .nudge-bar-x {
+  border: 0; background: none; color: #b45309; font-size: 12px;
+  cursor: pointer; padding: 2px 4px; border-radius: 4px;
+}
+.nudge-bar .nudge-bar-x:hover { background: #fef3c7; }
+/* 粘贴模式提示条（绿色系，与位置调整的橙色系区分） */
+.nudge-bar.paste-bar { background: #ecfdf3; border-color: #6ee7b7; color: #065f46; }
+.nudge-bar.paste-bar .nudge-bar-x { color: #047857; }
+.nudge-bar.paste-bar .nudge-bar-x:hover { background: #d1fae5; }
+/* 粘贴模式下画布光标提示 */
+.phone-screen.paste-armed, .phone-screen.paste-armed * { cursor: copy; }
 .fold-toggle { display: flex; gap: 4px; }
 .fold-toggle button { padding: 4px 8px; }
 .fold-toggle button.active { background: #3a6df0; border-color: #3a6df0; color: #fff; }

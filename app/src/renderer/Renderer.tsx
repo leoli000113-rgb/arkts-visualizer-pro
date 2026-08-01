@@ -226,15 +226,22 @@ export function renderNode(
     case 'Stack': {
       const o = ctorObj(node)
       const { justifyContent, alignItems } = stackAlign(o?.alignContent)
+      // CSS grid 同格层叠：所有子节点放同一 grid 单元（1/1），Stack 尺寸 = 最大子节点
+      // ——与 ArkUI Stack 一致（原先 absolute inset:0 层让 Stack 无在流内容，高度塌缩为 0，
+      // 「轮播图」这类 Stack{Column(h150)} 结构在画布上直接消失/错位）。
+      // .position() 子节点出流后相对 Stack 本层定位（而非某个 inset 层），锚点同样与真机一致。
+      // 基线 alignSelf stretch：ArkUI 中子节点的百分比尺寸按父级「提供的约束」解析，
+      // Stack{Column(100%)} 在真机是满宽的——CSS 里 100% 按最终包裹宽解析会循环塌缩，
+      // stretch 让 Stack 先占满交叉轴约束，子节点 100% 随之与真机一致（显式 alignSelf 可覆盖）。
       return (
-        <div key={k} {...f.common} style={{ position: 'relative', ...f.style }}>
+        <div key={k} {...f.common} style={{ position: 'relative', display: 'grid', alignSelf: 'stretch', ...f.style }}>
           {visibleChildren(node.children, states).map(({ c, i }) => {
             const rendered = ctx.render(c, [...path, i])
-            // 折叠 If/注释等渲染为 null 的子节点不产出绝放层，避免空层拦截点击/遮挡内容
+            // 折叠 If/注释等渲染为 null 的子节点不产出层，避免空层拦截点击/遮挡内容
             if (rendered === null) return null
             return (
               <div key={keyOf([...path, i])} style={{
-                position: 'absolute', inset: 0,
+                gridArea: '1 / 1', minWidth: 0, minHeight: 0,
                 display: 'flex', alignItems, justifyContent,
                 pointerEvents: 'none',
               }}>

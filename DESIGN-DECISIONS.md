@@ -421,3 +421,57 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - **大纲树成为编辑中枢**：行悬停出 ＋（容器→内部末尾/叶子→下方，弹插入选择器）/ ⧉副本 / ✕删除；插入选择器按目标容器的子类型+独子约束过滤，列出基础组件（registry 分组）与复合组件（分类），点选即插并自动选中。底部常驻操作提示条。
 - **组件库扩充分类**：9 → 22 个复合组件，分 6 类（导航/列表/卡片/表单/反馈/媒体），组件库面板按分类分组展示。新增 `library.test.tsx`：每个复合组件走「makeNode → serialize → parse → SSR 渲染」全链路断言不抛错（防「拖入即崩」回归），并断言只用已注册组件类型。
 - 测试 177/177 绿（+30：dnd 重定向 7 + 组件库全链路 23），typecheck/lint/build 全绿；Playwright 实测：区宽/面板高拖拽、大纲树停靠底部、插入选择器、复合组件拖入无 ghost/落点层残留、重置布局。
+
+## 22. 画布落点重设计 + 「位置调整」模式 + 大纲树默认右侧（2026-07-31）
+
+针对「往 Scroll 里加 Text，结果 Text 跑到 Scroll 外面」「画布拖拽容易误触改结构，想要只调位置的拖拽」「大纲树放右侧更顺手」三个反馈：
+
+- **「拖进 Scroll 却落到外面」根因与修复**：画布落点判定对容器一律用 30%/30% 比例带（上沿 before/下沿 after/中部 inside）。Scroll 这类大容器内容经常不填满盒（内层 Column 只占上半），指针落在盒内留白时** deepest 命中的是 Scroll 本体**，且 80% 高度处必中 after 带 → 新组件变成 Scroll 的兄弟（E2E 复现确认）。修复（仅画布模式，大纲树行分带不变）：
+  - 容器 before/after 比例带收窄为 **~10px 像素边带**（clamp(尺寸×0.1, 6, 12px)，沿分带轴），其余全部按 inside 解析——瞄准大容器盒 = 想放进容器，边缘窄带才 = 放到容器外（故意的兄弟插入仍可用）。
+  - inside 的插入位从「无脑追加末尾」改为**最近子位置**（`nearestChildIndex`：沿容器主轴取指针越过的最后一个可见子节点之后；Stack 仍压栈顶由 `.position` 定位；隐藏/未渲染子节点跳过）——拖到 行1/行2 间隙就落在二者之间。
+  - **约束回退**：before/after 被子类型/独子约束拒绝时（如 Scroll 内层 Column 的上下沿、根即 Scroll 的顶层边缘）自动改按 inside 解析，而非直接拒绝或**静默产生非法第二根子级**（顶层 before/after 原先跳过约束检查，根是已满独子容器时会序列化出双根子——顺手修掉的潜在 bug）。
+  - `setDropTarget` 去重比对补上 `index`：最近子位置让同一 path+pos 的 index 随指针变化，原去重条件会留下过期 index。
+- **画布右键「调整位置」模式**：右键菜单新增「调整位置（拖拽微调）」——开启后该节点进入位置调整态（橙色虚线框 + 移动光标 + 画布顶部提示条），此后画布拖拽它**只改 `.offset` 不动结构**（复用 Alt+拖拽的 freeOffset 通道，含吸附参考线）；方向键微调 1vp（Shift ×10，800ms 内连按合并一步撤销）；Esc / 提示条 ✕ / 右键「退出位置调整」退出；菜单另有「清除偏移量」。任何结构变更（增删移/撤销重做/换码）自动退出，防止 nudgePath 指向错误节点。大纲树拖拽不受此模式影响（`beginMaybeMove` 带 fromTree 标记）——树保持结构编辑中枢语义。
+- **大纲树默认停靠右侧**：DEFAULT_DOCKS 改为 outline→right（与属性/代码同区，导航独左）。persist 引入 version 1 迁移：仅当持久化布局恰为旧默认（nav/outline 左、props/code 右）时随迁，用户自定义过的布局不受影响。
+- 测试 183/183 绿（+6：画布窄边带/回退/根独子保护/叶子分带不变），typecheck/lint/build 全绿；Playwright 16 项断言：Scroll 留白拖入进内层、间隙就近插入、调整位置全交互（菜单/拖拽写 offset/结构不变/方向键/Esc/✕/树拖拽仍结构化/结构变更自动退出）、旧布局迁移与全新默认均右侧。
+
+## 23. 大纲树独立固定条 + 顶部停旗下线（2026-07-31）
+
+针对「大纲树要贴在导航面板右侧、紧挨着」「顶部停靠有点问题，去掉」「大纲树布局还有些 bug」三个反馈：
+
+- **大纲树移出停靠系统**：上一轮把大纲树作为可停靠面板放进右侧停靠区（与属性/代码均分高度），但用户要的「面板右侧」是**导航面板的右侧**——从组件面板拖组件进大纲树的路径要短、不跨越画布。现改为独立固定条 `OutlineStrip`：全高、紧贴左停靠区右缘（[导航][大纲树][画布][属性/代码]），宽度把手拖拽（160–560px，持久化 `outlineWidth`，默认 260）。不再参与四边停靠，首部右键菜单随之取消。
+- **顶部停旗下线**：DockSide 收窄为 `left | right | bottom`，DockZone/DockMenu/样式同步移除；面板只剩导航/属性/代码三个可停靠。
+- **persist v2 迁移**：规范化持久化布局——三面板停靠边仅保留 left/right/bottom（top 等非法值回默认），丢弃 layoutDocks/panelSize 的 outline 键与 zoneSize 的 top 键；用户自定义过的合法布局不变。
+- **大纲树行布局修复**：行改 `align-items: center + overflow: hidden`，摘要 `flex:1 + min-width:0` 省略号截断——此前长摘要/深层缩进会把行撑出横向滚动、悬停操作钮（＋⧉✕）被顶出可视区（用户体感的「布局 bug」）。
+- 测试 183/183 绿，typecheck/lint/build 全绿；Playwright 15 项断言：贴左区间距=0/全高/默认宽/菜单无顶部项/长摘要不溢出/悬停钮可视/宽度拖拽与持久化/树内拖入仍进独子内层/v1 旧状态迁移不崩且布局规范化。
+
+## 24. 大纲树条收合/展开（2026-07-31）
+
+针对「大纲树能收合和展开，按钮放面板右上，默认展开」的反馈：
+
+- 大纲树条首部右上的装饰性 ⋮⋮ 换成「«」收合按钮：点击收成 30px 窄条（» 按钮 + 竖排「大纲树」标签，点窄条任意处展开），画布自动放宽（fitMode 随之重算缩放）；展开后恢复先前拖拽的宽度。
+- 状态持久化（`outlineCollapsed`，partialize 落盘）：刷新保持；无该键的旧状态默认 false = 展开。
+- 测试 183/183 绿；Playwright 11 项断言：默认展开/收合成窄条/画布左移变宽/刷新保持/展开恢复宽度/持久化写回。
+
+## 25. 定位包含块真机语义 + 负值修饰符求值 + 系统栏安全区（2026-07-31）
+
+针对「画布与真机对 position/offset 的显示不一致（220% 宽 + offset 负值的 Scroll 在画布跑到标题右边、真机是与标题重合）」「大纲树点一下 Column，Scroll 就跳到右上」「位置调整拖完代码里看不到」「真机上下有系统栏留白，画布没有」四个反馈：
+
+- **选中态改变布局的根因**：frameOf 原先给「选中/落点/位置调整」的节点加 `position: relative` 高亮底衬。CSS 绝对定位的包含块是「最近 position≠static 祖先」，于是点选任何节点都可能改变其 `.position()` 后代的锚点——选中 Row（无尺寸、唯一子节点 position）时 Scroll 直接掉到 0 宽；选中 Scroll 自身时 relative 覆盖 absolute 被拽回文档流（E2E 实测矩形从 (4.8,2.4,813w) 跳到 (189.6,55.7,0w)/(157.8,55.7,63.6w)）。修复：选中/落点/位置调整高亮只加 outline/cursor，**绝不动 position**；所有非塌缩节点基线 `position: relative`（styleOf 显式 absolute 优先），布局从此不随选中态变化。
+- **塌缩容器不建立包含块**：容器无显式尺寸修饰符（width/height/size/constraintSize/layoutWeight/aspectRatio/flexGrow/flexBasis）且全部子节点带 `.position()` 时保持 static（`wouldCollapse`）——position 子节点按 CSS 原生语义上溯到有大小的祖先（本例 Column 100%×100%），百分比尺寸与锚点随之与真机一致（Scroll 220% 按屏宽解析、锚在应用区顶与标题重合）。Stack/Badge/RelativeContainer 按职责恒 relative 不受影响。
+- **负值修饰符参数丢失（「代码里看不到」的根）**：parser 把一元表达式 `-178` 记为 `{t:'raw'}`，而 position/offset/translate/rotate/scale/shadow/box 原先用不求值的 `num()` 取值——负数全部静默变 0（`translate(0px, 0px)`，E2E 实测）。全部改走 styleOf 内已有的求值感知通道（`numE/lenE`，box 增加可选 states 参）——「位置调整」写入的负 offset 现在真正生效。
+- **position/offset 支持百分比字符串**：`position({x:'50%'})`、`offset({x:'-50%'})` 直通 CSS（translate 百分比相对自身宽高，与 ArkUI 一致）；position 数值保持 vp 换算。
+- **系统栏安全区**：`.phone-screen` 改纵向 flex——状态栏（18px≈30vp，时间 + 信号/Wi-Fi/电池 SVG 图标）+ `.app-area` 应用区 + 底部手势导航条（12px≈20vp）。根 100% 高 = 应用区高，与真机非沉浸布局一致；顶栏新增「系统栏」开关（`systemBars`，默认开，partialize 持久化，旧状态缺键默认开）。
+- 测试 188/188 绿（+5：选中后仍 absolute/塌缩容器 static/百分比/负值 offset/负值 margin），typecheck/lint/build 全绿；Playwright 15 项断言：四种选中态矩形完全一致、220% 按屏宽、锚在应用区顶部、负 offset 推出屏外、系统栏默认显示/应用区扣安全区/开关与刷新持久化。
+
+## 26. Stack 真机尺寸 + 滚动容器占满 + 粘贴模式 + 拖拽缩略图隔离（2026-07-31）
+
+针对「Scroll 老出错」「大纲树拖进容器要更简单」「复制后点一下就能粘贴」「模板轮播图位置对不上 / 分类导航热门推荐真机不显示 / 待办不能勾选 / 图文列表不满宽」一批反馈：
+
+- **拖拽解析的「缩略图冲突」（Scroll 老出错、蓝屏残留的真正根因之一）**：模板缩略图（TemplateThumb）也用 renderNode 渲染，带同样的 `data-path`——dnd 的 `elOf` 与 `elementsFromPoint` 命中查找原先不限范围，拖到模板面板区域时会把**缩略图元素**当画布节点解析（错误坐标/错误路径，甚至异常残留）。现全部限定 `.phone-screen` 范围。
+- **Stack 改 CSS grid 同格层叠**：原先每个子节点包 `absolute inset:0` 层 → Stack 无在流内容、高度塌缩为 0（「轮播图」Stack{Column(h150)} 在画布上消失/错位）。现所有子节点放同一 grid 单元（`gridArea:1/1`），Stack 尺寸 = 最大子节点（ArkUI 语义）；`.position()` 子节点出流后相对 Stack 本层定位，锚点更准；再叠加基线 `alignSelf:stretch`——ArkUI 子节点百分比按「父级提供的约束」解析（Stack{Column(100%)} 真机满宽），CSS 100% 按最终包裹宽会循环塌缩，stretch 让二者一致（显式 alignSelf 可覆盖）。
+- **滚动容器默认交叉轴占满**：Scroll/List/Grid/Tabs 基线 `alignSelf:stretch`（ArkUI 滚动容器默认占满父组件交叉轴；模板不写 width 也满宽，如「图文列表」）。显式 width/alignSelf 修饰符经 f.style 自然覆盖。
+- **模板真机化修复**：「分类导航」中部内容改由 `Scroll().layoutWeight(1)` 承载（原写法在真机上 Grid 滚动容器扩张把「热门推荐/限时优惠」挤出屏外）；「极简首页」待办由 `Text('☐')` 换成真 `Checkbox().select(...)`——真机可勾选，画布 CheckboxView 本就可点（本地 state，不写 IR）。
+- **粘贴模式**：复制/剪切即开启（绿色提示条 + copy 光标），此后**点击容器 = 放入其内部末尾（独子已满自动下钻内层）、点击组件 = 放到其后**，可连续点击多处（复制一次即可）；Esc / 提示条 ✕ / 点空白 / 代码变更 / 撤销重做退出。frameOf 点击带 `.phone-screen` 限定（缩略图点击不触发）；store 新增 `pasteArmed/pasteAt`（`descendFullSingleChild` 随之从 dnd 迁至 ir/constraints，供 store 与 dnd 共用，原路径 re-export 不变）。
+- **大纲树拖入容器更简单**：树内 before/after 边带 30% → 20%（中部 60% 一律进容器）；拖拽悬停收合容器 600ms 自动展开；任何来源的选中都会自动展开其全部祖先行（zustand subscribe 实现，避开 effect 内同步 setState）——落进收合容器的新组件立即可见。
+- 测试 195/195 绿（+7：pasteAt 五项 + Stack grid/滚动容器 stretch 两项），typecheck/lint/build 全绿；Playwright 18 项断言：轮播位 150vp 满宽、热门推荐可视、Checkbox 点击翻转互不影响、List/ListItem 满宽、粘贴模式全流程（提示条/进容器/连续/Esc/退出不粘贴）、树内拖入 Stack、缩略图隔离拖拽不崩。

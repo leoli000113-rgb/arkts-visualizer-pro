@@ -409,77 +409,81 @@ struct CategoryNav {
           .layoutWeight(1).height(36).margin({ left: 8 })
       }.width('100%').padding(12).backgroundColor('#fff')
 
-      Column() {
-        Text('常用功能').fontSize(15).margin({ bottom: 12 })
-        Grid() {
-          GridItem() {
-            Column() {
-              Text('💳').fontSize(32)
-              Text('支付').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-          GridItem() {
-            Column() {
-              Text('🚗').fontSize(32)
-              Text('出行').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-          GridItem() {
-            Column() {
-              Text('🍜').fontSize(32)
-              Text('美食').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-          GridItem() {
-            Column() {
-              Text('🎬').fontSize(32)
-              Text('电影').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-          GridItem() {
-            Column() {
-              Text('🏥').fontSize(32)
-              Text('医疗').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-          GridItem() {
-            Column() {
-              Text('📚').fontSize(32)
-              Text('教育').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-          GridItem() {
-            Column() {
-              Text('🎮').fontSize(32)
-              Text('游戏').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-          GridItem() {
-            Column() {
-              Text('✈️').fontSize(32)
-              Text('旅游').fontSize(12).margin({ top: 4 })
-            }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
-          }
-        }.columnsTemplate('1fr 1fr 1fr 1fr')
-        .rowsGap(4).columnsGap(4)
-      }.width('100%').padding(16).backgroundColor('#fff').margin({ top: 8 })
+      Scroll() {
+        Column() {
+          Column() {
+            Text('常用功能').fontSize(15).margin({ bottom: 12 })
+            Grid() {
+              GridItem() {
+                Column() {
+                  Text('💳').fontSize(32)
+                  Text('支付').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+              GridItem() {
+                Column() {
+                  Text('🚗').fontSize(32)
+                  Text('出行').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+              GridItem() {
+                Column() {
+                  Text('🍜').fontSize(32)
+                  Text('美食').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+              GridItem() {
+                Column() {
+                  Text('🎬').fontSize(32)
+                  Text('电影').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+              GridItem() {
+                Column() {
+                  Text('🏥').fontSize(32)
+                  Text('医疗').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+              GridItem() {
+                Column() {
+                  Text('📚').fontSize(32)
+                  Text('教育').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+              GridItem() {
+                Column() {
+                  Text('🎮').fontSize(32)
+                  Text('游戏').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+              GridItem() {
+                Column() {
+                  Text('✈️').fontSize(32)
+                  Text('旅游').fontSize(12).margin({ top: 4 })
+                }.width('100%').alignItems(HorizontalAlign.Center).padding(12)
+              }
+            }.columnsTemplate('1fr 1fr 1fr 1fr')
+            .rowsGap(4).columnsGap(4)
+          }.width('100%').padding(16).backgroundColor('#fff').margin({ top: 8 })
 
-      Column() {
-        Text('热门推荐').fontSize(15).margin({ bottom: 8 })
-        Row() {
-          Text('🔥').fontSize(16)
-          Text('限时优惠：全场五折起')
-            .fontSize(14).layoutWeight(1).margin({ left: 8 })
-          Text('>').fontColor('#ccc')
-        }.width('100%').padding(12)
-        .border({ width: { bottom: 1 }, color: '#f5f5f5' })
-        Row() {
-          Text('🆕').fontSize(16)
-          Text('新功能上线：智能推荐')
-            .fontSize(14).layoutWeight(1).margin({ left: 8 })
-          Text('>').fontColor('#ccc')
-        }.width('100%').padding(12)
-      }.width('100%').padding(16).backgroundColor('#fff').margin({ top: 8 }).layoutWeight(1)
+          Column() {
+            Text('热门推荐').fontSize(15).margin({ bottom: 8 })
+            Row() {
+              Text('🔥').fontSize(16)
+              Text('限时优惠：全场五折起')
+                .fontSize(14).layoutWeight(1).margin({ left: 8 })
+              Text('>').fontColor('#ccc')
+            }.width('100%').padding(12)
+            .border({ width: { bottom: 1 }, color: '#f5f5f5' })
+            Row() {
+              Text('🆕').fontSize(16)
+              Text('新功能上线：智能推荐')
+                .fontSize(14).layoutWeight(1).margin({ left: 8 })
+              Text('>').fontColor('#ccc')
+            }.width('100%').padding(12)
+          }.width('100%').padding(16).backgroundColor('#fff').margin({ top: 8 })
+        }.width('100%')
+      }.layoutWeight(1)
     }.width('100%').height('100%').backgroundColor('#f5f5f5')
   }
 }`
@@ -519,17 +523,17 @@ struct MinimalHome {
         Text('待办事项').fontSize(16).fontColor('#333').margin({ bottom: 12 })
           .alignSelf(ItemAlign.Start)
         Row() {
-          Text('☐').fontSize(18)
+          Checkbox().select(false)
           Text('完成项目文档').fontSize(14).layoutWeight(1).margin({ left: 8 })
           Text('10:00').fontSize(12).fontColor('#999')
         }.width('100%').padding(8)
         Row() {
-          Text('☐').fontSize(18)
+          Checkbox().select(false)
           Text('回复客户邮件').fontSize(14).layoutWeight(1).margin({ left: 8 })
           Text('14:00').fontSize(12).fontColor('#999')
         }.width('100%').padding(8)
         Row() {
-          Text('✅').fontSize(18)
+          Checkbox().select(true)
           Text('晨会已结束').fontSize(14).layoutWeight(1).margin({ left: 8 })
             .fontColor('#ccc')
           Text('09:00').fontSize(12).fontColor('#ccc')

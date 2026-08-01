@@ -44,6 +44,7 @@ export function TopBar({ onOpenHelp }: { onOpenHelp: () => void }) {
     setDevice, setFold, resetToSample,
     undo, redo, showAids, setShowAids,
     interactive, setInteractive,
+    systemBars, setSystemBars,
   } = useStore()
   const canUndo = useStore(s => s.past.length > 0)
   const canRedo = useStore(s => s.future.length > 0)
@@ -157,6 +158,10 @@ export function TopBar({ onOpenHelp }: { onOpenHelp: () => void }) {
       <label className="aids-toggle">
         <input type="checkbox" checked={showAids} onChange={(e) => setShowAids(e.target.checked)} />
         辅助标记
+      </label>
+      <label className="aids-toggle" title="显示手机状态栏与底部导航条，应用区避开安全区（与真机一致）">
+        <input type="checkbox" checked={systemBars} onChange={(e) => setSystemBars(e.target.checked)} />
+        系统栏
       </label>
       <span className="dim">{vp.w_vp} × {vp.h_vp} vp</span>
       {error && <span className="err" title={error}>解析失败</span>}
