@@ -2,7 +2,7 @@ import React, { CSSProperties, useState } from 'react'
 import { getModifier } from '../ir/mutate'
 import {
   ViewProps, frameOf, ctorObj, vp, num, keyOf,
-  flexJustify, itemAlign, resolveNum, resolveStr,
+  flexJustify, itemAlign, resolveNum, resolveStr, resolveBool,
 } from './shared'
 
 /**
@@ -144,45 +144,70 @@ export function GridItemView({ node, path, ctx }: ViewProps) {
 /**
  * Tabs：本地 React state 记当前标签（初值取 ctor obj index，可解析 this.x @State），
  * 标签栏文本取各 TabContent 的 .tabBar('...')；非当前 TabContent 以 display:none 保留在
- * DOM 中（SSR/测试可见全量内容），点击标签即时切换。.barMode 先按固定栏呈现。
+ * DOM 中（SSR/测试可见全量内容），点击标签即时切换。
+ * barPosition: Start（默认，顶/左）/ End（底/右）；vertical(true) 时页签栏竖排在左/右。
+ * .barMode 先按固定栏呈现。
  */
 export function TabsView({ node, path, ctx }: ViewProps) {
   const f = frameOf(node, path, ctx)
   const o = ctorObj(node)
   const [active, setActive] = useState(() => Math.round(resolveNum(o?.index, ctx.states) ?? 0))
   const cur = Math.max(0, Math.min(active, Math.max(0, node.children.length - 1)))
+  // ArkUI：barPosition 默认 Start（水平 Tabs 在顶、垂直在左），End 在底/右
+  const bp = o?.barPosition
+  const barEnd = !!bp && bp.t === 'enum' && bp.v.endsWith('.End')
+  const vertical = resolveBool(o?.vertical, ctx.states) ?? false
+  const bar = (
+    <div key="bar"
+      className={'ir-tabs-bar' + (barEnd ? ' end' : '') + (vertical ? ' vertical' : '')}>
+      {node.children.map((c, i) => {
+        const ta = getModifier(c, 'tabBar')?.args[0]
+        const label = ta && ta.t === 'str' ? ta.v : `Tab ${i + 1}`
+        return (
+          <div key={i}
+            className={'ir-tabs-tab' + (i === cur ? ' active' : '')}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setActive(i) }}>
+            {label}
+          </div>
+        )
+      })}
+    </div>
+  )
+  const contents = node.children.map((c, i) => (
+    <TabContentView key={keyOf([...path, i])} node={c} path={[...path, i]} ctx={ctx} hidden={i !== cur} />
+  ))
   return (
-    <div {...f.common} style={{ alignSelf: 'stretch', display: 'flex', flexDirection: 'column', ...f.style }}>
-      <div className="ir-tabs-bar">
-        {node.children.map((c, i) => {
-          const ta = getModifier(c, 'tabBar')?.args[0]
-          const label = ta && ta.t === 'str' ? ta.v : `Tab ${i + 1}`
-          return (
-            <div key={i}
-              className={'ir-tabs-tab' + (i === cur ? ' active' : '')}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); setActive(i) }}>
-              {label}
-            </div>
-          )
-        })}
-      </div>
-      {node.children.map((c, i) => (
-        <TabContentView key={keyOf([...path, i])} node={c} path={[...path, i]} ctx={ctx} hidden={i !== cur} />
-      ))}
+    <div {...f.common} style={{
+      alignSelf: 'stretch',
+      display: 'flex', flexDirection: vertical ? 'row' : 'column',
+      ...f.style,
+    }}>
+      {!barEnd && bar}
+      {contents}
+      {barEnd && bar}
       {f.indicator}
       {f.handles}
     </div>
   )
 }
 
-/** TabContent：单页内容容器；hidden 时仅隐藏不卸载 */
+/**
+ * TabContent：单页内容容器；hidden 时仅隐藏不卸载。
+ * ArkUI：TabContent 大小 = Tabs 内容区（宽撑满、高 = Tabs − TabBar），其独子按「占满约束」
+ * 测量——未显式设尺寸时充满整个 TabContent（真机上 Column.justifyContent(Center) 才能垂直居中，
+ * 画布若让子组件包裹内容，居中/百分比高度全部失效，内容堆在顶部）。
+ * 用 grid 满格复现：auto 尺寸子组件默认 stretch 撑满；显式宽高不受 stretch 影响，与真机一致。
+ */
 export function TabContentView({ node, path, ctx, hidden }: ViewProps & { hidden?: boolean }) {
   const f = frameOf(node, path, ctx)
   return (
     <div {...f.common} style={{
-      display: hidden ? 'none' : 'flex', flexDirection: 'column',
-      flex: 1, minHeight: 0,
+      display: hidden ? 'none' : 'grid',
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      gridTemplateRows: 'minmax(0, 1fr)',
+      gridAutoRows: 'minmax(0, 1fr)',
+      flex: 1, minWidth: 0, minHeight: 0,
       ...f.style,
     }}>
       {ctx.renderChildren(node, path)}

@@ -153,10 +153,13 @@
 .palette-item:active { cursor: grabbing; }
 .palette-hint { padding: 8px 10px; font-size: 11px; color: #667085; line-height: 1.5; }
 
-.drop-line { position: absolute; left: 0; right: 0; height: 3px; background: #3a6df0; z-index: 40; box-shadow: 0 0 6px #3a6df0; pointer-events: none; }
-.drop-line-top { top: -2px; }
-.drop-line-bottom { bottom: -2px; }
-.drop-inside { position: absolute; inset: 0; border: 2px dashed #3a6df0; z-index: 40; pointer-events: none; border-radius: 4px; box-sizing: border-box; background: rgba(58,109,240,.08); }
+/* 画布落点覆盖层：必须限定 .phone-screen 内——大纲树行也用 drop-inside 类名作高亮，
+   裸类名会让树行命中 position:absolute+inset:0 变成覆盖整个面板的蓝色层（「蓝屏」），
+   且 pointer-events:none 让树行脱离命中检测（拖入不灵敏）。 */
+.phone-screen .drop-line { position: absolute; left: 0; right: 0; height: 3px; background: #3a6df0; z-index: 40; box-shadow: 0 0 6px #3a6df0; pointer-events: none; }
+.phone-screen .drop-line-top { top: -2px; }
+.phone-screen .drop-line-bottom { bottom: -2px; }
+.phone-screen .drop-inside { position: absolute; inset: 0; border: 2px dashed #3a6df0; z-index: 40; pointer-events: none; border-radius: 4px; box-sizing: border-box; background: rgba(58,109,240,.08); }
 
 /* ---- 大纲树 ---- */
 .outline-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -263,7 +266,13 @@
 }
 .dev-close:hover { color: #1f2329; }
 .dev-group { border: 1px solid #e4e7ec; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
-.dev-group-title { font-size: 12px; color: #667085; }
+.dev-group-title { font-size: 12px; color: #667085; display: flex; align-items: center; justify-content: space-between; }
+.dev-mode-toggle {
+  background: #ffffff; color: #3a6df0; border: 1px solid #c7d4f5; border-radius: 5px;
+  font-size: 11px; padding: 2px 8px; cursor: pointer;
+}
+.dev-mode-toggle:hover { background: #f0f4fe; }
+.dev-mode-toggle.active { background: #3a6df0; color: #fff; border-color: #3a6df0; }
 .dev-vp-hint { font-size: 11px; color: #667085; }
 .dev-msg { font-size: 12px; color: #067647; }
 .dev-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -428,13 +437,14 @@
 
 /* ---- 模板即时缩图 ---- */
 .tmpl-thumb {
-  width: 100%; height: 150px; overflow: hidden;
-  border: 1px solid #e0e3e8; border-radius: 6px; background: #fff;
+  width: 100%; height: 180px; overflow: hidden;
+  border: 1px solid #e0e3e8; border-radius: 6px; background: #f7f8fa;
   pointer-events: none; position: relative;
+  /* 固定限高：长屏设备（1000+ vp）缩略图不会过长；内容按缩放后尺寸居中 */
 }
 .tmpl-thumb-scale {
-  width: 278px; transform: scale(0.63); transform-origin: top left;
-  font-size: 9.6px; line-height: 1.35; color: #182431; position: relative;
+  position: absolute; transform-origin: top left;
+  box-shadow: 0 0 0 1px #e0e3e8;
 }
 
 /* ---- Stack 对齐吸附参考线 ---- */

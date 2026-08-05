@@ -4,9 +4,12 @@ import { acceptsChild, canAcceptMore, descendFullSingleChild } from '../ir/const
 import { CONTAINER_TYPES } from '../registry'
 import { IRNode } from '../ir/types'
 import { createNode } from '../ir/defaults'
+import { pxPerVp } from './scale'
 
 // 约束定义已迁至 registry（元件注册表）；此处再导出保持既有引用可用
 export { acceptsChild, canAcceptMore, SINGLE_CHILD, descendFullSingleChild } from '../ir/constraints'
+// px↔vp 换算口径统一在 ./scale（基于 effZoom）；再导出保持既有引用可用
+export { pxPerVp } from './scale'
 
 export type DropPos = 'before' | 'inside' | 'after'
 export interface DropTarget { path: Path; pos: DropPos; parent: Path; index: number; at?: { x: number; y: number } }
@@ -21,11 +24,6 @@ interface Ctx {
 
 /** 容器判定（中部落点 = inside）：由 registry 派生 */
 const CONTAINERS = CONTAINER_TYPES
-
-/** 屏幕像素 → vp 的换算系数（基准 1vp = 0.6 CSS px × 画布缩放） */
-function pxPerVp(): number {
-  return 0.6 * useStore.getState().zoom
-}
 
 let ctx: Ctx | null = null
 let bound = false
@@ -212,6 +210,28 @@ export function beginMaybeMove(path: Path, e: React.PointerEvent, fromTree = fal
 
 function onMaybeMove(e: PointerEvent) {
   if (!pending) return
+  try {
+    onMaybeMoveInner(e)
+  } catch (err) {
+    // 预备拖拽阶段异常也必须清 pending，否则每次移动都重复抛错、手势卡死
+    console.error('[dnd] onMaybeMove', err)
+    pending = null
+    detachPending()
+  }
+}
+/**
+ * 拖拽起手势的目标与模式判定（纯函数，可测）：
+ * 画布「位置调整」模式下，按下点命中的其实是最内层子组件——只要落点在 nudge 目标子树内
+ * （含目标本身），拖拽目标就提升到 nudge 节点并走偏移模式，否则微调父组件会变成拖动子组件。
+ */
+export function resolveDragStart(path: Path, fromTree: boolean, nudge: Path | null, altKey: boolean): { dragPath: Path; alt: boolean } {
+  const inNudge = !fromTree && !!nudge &&
+    nudge.length <= path.length && nudge.every((v, i) => v === path[i])
+  return { dragPath: inNudge ? nudge! : path, alt: altKey || inNudge }
+}
+
+function onMaybeMoveInner(e: PointerEvent) {
+  if (!pending) return
   if (e.buttons === 0) { pending = null; detachPending(); return } // 错过了 pointerup → 取消预备拖拽
   const dx = e.clientX - pending.x
   const dy = e.clientY - pending.y
@@ -219,13 +239,12 @@ function onMaybeMove(e: PointerEvent) {
   const { path, fromTree } = pending
   // 画布「位置调整」模式（右键菜单开启）：拖拽该节点只改 .offset，不动结构；
   // 大纲树发起的拖拽保持结构化移动（树是结构编辑中枢）
-  const nudge = useStore.getState().nudgePath
-  const alt = e.altKey || (!fromTree && !!nudge && samePath(nudge, path))
+  const { dragPath, alt } = resolveDragStart(path, fromTree, useStore.getState().nudgePath, e.altKey)
   const sx = pending.x
   const sy = pending.y
   pending = null
   detachPending()
-  startMoveDrag(path, alt)
+  startMoveDrag(dragPath, alt)
   if (ctx?.freeOffset) { ctx.freeOffset.startX = sx; ctx.freeOffset.startY = sy }
 }
 function onMaybeUp() {
@@ -357,6 +376,34 @@ function onMove(e: PointerEvent) {
   }
 }
 
+/** 树面板空白区（行间隙/末尾空白/缩进留白）拖入时吸附到最近行——避免「拖到树上却没反应」 */
+function nearestTreeRow(x: number, y: number): HTMLElement | null {
+  if (typeof document === 'undefined') return null
+  const outline = document.querySelector('.outline')
+  if (!outline) return null
+  const ob = outline.getBoundingClientRect()
+  if (x < ob.left || x > ob.right || y < ob.top || y > ob.bottom) return null
+  let best: HTMLElement | null = null
+  let bestD = Infinity
+  for (const row of Array.from(outline.querySelectorAll<HTMLElement>('[data-tree-path]'))) {
+    const r = row.getBoundingClientRect()
+    if (r.height === 0) continue
+    const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0
+    if (d < bestD) { bestD = d; best = row }
+  }
+  return best
+}
+
+/** 拖拽接近大纲树视口上/下沿时自动滚动（深层容器不用松手换滚轮） */
+function autoScrollOutline(row: HTMLElement, y: number) {
+  const outline = row.closest('.outline')
+  if (!outline) return
+  const r = outline.getBoundingClientRect()
+  const M = 28
+  if (y < r.top + M) outline.scrollTop -= Math.ceil((r.top + M - y) / 4)
+  else if (y > r.bottom - M) outline.scrollTop += Math.ceil((y - (r.bottom - M)) / 4)
+}
+
 function onMoveInner(e: PointerEvent) {
   if (!ctx) return
   moveGhost(e.clientX, e.clientY)
@@ -396,9 +443,11 @@ function onMoveInner(e: PointerEvent) {
     return
   }
   const els = document.elementsFromPoint(e.clientX, e.clientY) as HTMLElement[]
-  // 大纲树落点：行上 30%/30% 分带（Row 父按水平、其余按垂直——树内一律垂直分带）
-  const treeRow = els.find(x => typeof x.hasAttribute === 'function' && x.hasAttribute('data-tree-path'))
+  // 大纲树落点：行上 20%/20% 分带；未命中行但指针在树面板内时吸附最近行并边缘自动滚动
+  let treeRow = els.find(x => typeof x.hasAttribute === 'function' && x.hasAttribute('data-tree-path')) as HTMLElement | undefined
+  if (!treeRow) treeRow = nearestTreeRow(e.clientX, e.clientY) ?? undefined
   if (treeRow) {
+    autoScrollOutline(treeRow, e.clientY)
     const pathStr = treeRow.getAttribute('data-tree-path') || ''
     const path: Path = pathStr === '' ? [] : pathStr.split('.').map(Number)
     const box = treeRow.getBoundingClientRect()

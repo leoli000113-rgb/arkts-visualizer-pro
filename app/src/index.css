@@ -32,7 +32,10 @@ body { background: #f0f2f5; color: #1f2329; }
   background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.18);
   overflow: hidden; position: relative;
 }
-.phone-screen { position: relative; overflow: hidden; user-select: none; background: #fff; display: flex; flex-direction: column; }
+/* .phone-static：模板缩略图的手机屏容器，与画布 .phone-screen 同布局；
+   独立类名是因为 dnd 按 .phone-screen 限定画布范围，缩略图不能混入 */
+.phone-screen, .phone-static { position: relative; overflow: hidden; background: #fff; display: flex; flex-direction: column; }
+.phone-screen { user-select: none; }
 .phone-screen.interactive, .phone-screen.interactive * { cursor: pointer; }
 /* 应用区：系统栏开启时 = 屏幕减去状态栏/导航条（安全区），与真机非沉浸布局一致 */
 .app-area { position: relative; flex: 1; min-height: 0; overflow: hidden; }

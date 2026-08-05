@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../store/store'
-import { deviceList, getDeviceProfile, saveDeviceOverride, resetDeviceOverrides } from '../devices/devices'
+import { deviceList, getDeviceProfile, saveDeviceOverride, resetDeviceOverrides, vpToPxDpi } from '../devices/devices'
 
 interface Dims { w: string; h: string; dpi: string }
 interface FormState { foldable: boolean; flat: Dims; unfolded: Dims; folded: Dims }
@@ -36,15 +36,61 @@ const pxToVp = (px: number, dpi: number) => Math.round((px * 160) / dpi)
 
 function DimsGroup({ title, dims, onChange }: { title: string; dims: Dims; onChange: (d: Dims) => void }) {
   const parsed = parseDims(dims)
+  const [vpMode, setVpMode] = useState(false)
+  // vp 直填：草稿态本地受控（容忍输入中间态），合法正整数即合成 px/dpi 回写（vpToPxDpi 往返精确）；
+  // 外部变更（切换设备/新增模式重置表单）时按 dims 内容重同步草稿
+  const curWv = parsed ? pxToVp(parsed.screenW_px, parsed.dpi) : 0
+  const curHv = parsed ? pxToVp(parsed.screenH_px, parsed.dpi) : 0
+  const [wS, setWS] = useState('')
+  const [hS, setHS] = useState('')
+  const dimsKey = `${dims.w}|${dims.h}|${dims.dpi}`
+  const [prevKey, setPrevKey] = useState('')
+  if (dimsKey !== prevKey) {
+    setPrevKey(dimsKey)
+    if (parsed) {
+      // 仅当与草稿推导值不一致（外部变更）时覆盖草稿，保留输入中间态
+      if (parseInt(wS, 10) !== curWv) setWS(String(curWv))
+      if (parseInt(hS, 10) !== curHv) setHS(String(curHv))
+    }
+  }
+  const setVp = (wv: number, hv: number) => {
+    if (wv > 0 && hv > 0) {
+      const d = vpToPxDpi(wv, hv)
+      onChange({ w: String(d.screenW_px), h: String(d.screenH_px), dpi: String(d.dpi) })
+    }
+  }
   return (
     <div className="dev-group">
-      <div className="dev-group-title">{title}</div>
-      <label className="prop-row"><span>screenW_px</span>
-        <input type="number" value={dims.w} onChange={(e) => onChange({ ...dims, w: e.target.value })} /></label>
-      <label className="prop-row"><span>screenH_px</span>
-        <input type="number" value={dims.h} onChange={(e) => onChange({ ...dims, h: e.target.value })} /></label>
-      <label className="prop-row"><span>dpi</span>
-        <input type="number" value={dims.dpi} onChange={(e) => onChange({ ...dims, dpi: e.target.value })} /></label>
+      <div className="dev-group-title">
+        {title}
+        <button type="button" className={`dev-mode-toggle${vpMode ? ' active' : ''}`}
+          title="已知道自己手机的 vp 尺寸（真机 px2vp 实测 / DevEco 预览器视口）时，直接填 vp 最准"
+          onClick={() => setVpMode(!vpMode)}>
+          {vpMode ? 'vp 直填中' : '按 vp 直填'}
+        </button>
+      </div>
+      {vpMode ? (
+        <>
+          <label className="prop-row"><span>宽（vp）</span>
+            <input type="number" value={wS}
+              onChange={(e) => { setWS(e.target.value); setVp(parseInt(e.target.value, 10), parseInt(hS, 10)) }} /></label>
+          <label className="prop-row"><span>高（vp）</span>
+            <input type="number" value={hS}
+              onChange={(e) => { setHS(e.target.value); setVp(parseInt(wS, 10), parseInt(e.target.value, 10)) }} /></label>
+          <div className="dev-vp-hint">
+            如何知道自己手机的 vp：真机跑 px2vp(display.getDefaultDisplaySync().width/height)，或看 DevEco 预览器视口尺寸
+          </div>
+        </>
+      ) : (
+        <>
+          <label className="prop-row"><span>screenW_px</span>
+            <input type="number" value={dims.w} onChange={(e) => onChange({ ...dims, w: e.target.value })} /></label>
+          <label className="prop-row"><span>screenH_px</span>
+            <input type="number" value={dims.h} onChange={(e) => onChange({ ...dims, h: e.target.value })} /></label>
+          <label className="prop-row"><span>dpi</span>
+            <input type="number" value={dims.dpi} onChange={(e) => onChange({ ...dims, dpi: e.target.value })} /></label>
+        </>
+      )}
       <div className="dev-vp-hint">
         {parsed ? `≈ ${pxToVp(parsed.screenW_px, parsed.dpi)} × ${pxToVp(parsed.screenH_px, parsed.dpi)} vp（保存时自动重算）` : '请输入正整数'}
       </div>

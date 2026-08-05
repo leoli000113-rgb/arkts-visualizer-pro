@@ -1,5 +1,6 @@
 import { useStore } from '../store/store'
 import { getModifier, getNodeAtPath, setModifier, Path } from '../ir/mutate'
+import { pxPerVp } from '../editor/scale'
 
 interface Drag {
   path: Path
@@ -39,7 +40,7 @@ export function startResize(path: Path, dim: 'width' | 'height' | 'both', e: Rea
 }
 
 const toVp = (start: number, deltaCss: number) =>
-  Math.max(0, Math.round((start + deltaCss / (0.6 * useStore.getState().zoom)) * 10) / 10)
+  Math.max(0, Math.round((start + deltaCss / pxPerVp()) * 10) / 10)
 
 function onMove(e: PointerEvent) {
   if (!drag) return

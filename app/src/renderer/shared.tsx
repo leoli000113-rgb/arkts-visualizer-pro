@@ -651,6 +651,10 @@ export function frameOf(node: IRNode, path: Path, ctx: RenderCtx, noMargin = fal
   // 定位包含块基线：非塌缩节点一律 relative（ArkUI 中 .position 相对父组件）。
   // 塌缩容器保持 static，其 position 子节点按 CSS 原生语义上溯到有大小的祖先。
   if (!style.position && !wouldCollapse(node)) style.position = 'relative'
+  // 例外：该节点正显示落点指示（.drop-inside/.drop-line 均 absolute inset/贴边）时
+  // 必须建立包含块——否则指示层逃逸到 .phone-screen，整个手机屏蒙蓝（用户感知的「蓝屏」）。
+  // relative 不带偏移，对布局零影响。
+  if (dropPos && !style.position) style.position = 'relative'
   return { sel, dropPos, common, handles, indicator, style }
 }
 

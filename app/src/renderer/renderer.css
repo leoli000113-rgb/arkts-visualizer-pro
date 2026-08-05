@@ -14,6 +14,22 @@
 }
 .ir-tabs-tab.active { color: #0A59F7; border-bottom-color: #0A59F7; font-weight: 600; }
 
+/* barPosition.End：页签栏在底部（真机常见的主页底 tab） */
+.ir-tabs-bar.end { border-bottom: none; border-top: 1px solid #e5e6eb; }
+.ir-tabs-bar.end .ir-tabs-tab { border-bottom: none; border-top: 2px solid transparent; }
+.ir-tabs-bar.end .ir-tabs-tab.active { border-top-color: #0A59F7; }
+
+/* vertical(true)：页签栏竖排在左（barPosition.End 时在右，由 flex 顺序保证） */
+.ir-tabs-bar.vertical {
+  flex-direction: column; border-bottom: none; border-right: 1px solid #e5e6eb;
+  overflow-x: visible; overflow-y: auto;
+}
+.ir-tabs-bar.vertical .ir-tabs-tab { border-bottom: none; border-right: 2px solid transparent; }
+.ir-tabs-bar.vertical .ir-tabs-tab.active { border-right-color: #0A59F7; }
+.ir-tabs-bar.vertical.end { border-right: none; border-left: 1px solid #e5e6eb; }
+.ir-tabs-bar.vertical.end .ir-tabs-tab { border-right: none; border-left: 2px solid transparent; }
+.ir-tabs-bar.vertical.end .ir-tabs-tab.active { border-left-color: #0A59F7; }
+
 /* ---- If / Else / ForEach 角标与折叠徽标 ---- */
 .ir-badge {
   position: absolute; top: 0; right: 0; z-index: 30;

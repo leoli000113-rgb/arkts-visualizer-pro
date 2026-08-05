@@ -14,6 +14,46 @@
       "source": "https://consumer.huawei.com/cn/phones/mate80-pro-max/specs/"
     },
     {
+      "model": "标准 360 基准",
+      "foldable": false,
+      "screenW_px": 1080,
+      "screenH_px": 2340,
+      "dpi": 480,
+      "screenW_vp": 360,
+      "screenH_vp": 780,
+      "source": "DevEco 预览器/模拟器常见默认（1080×2340 @480dpi），多数设计稿基准"
+    },
+    {
+      "model": "Mate 60 Pro",
+      "foldable": false,
+      "screenW_px": 1260,
+      "screenH_px": 2720,
+      "dpi": 440,
+      "screenW_vp": 458,
+      "screenH_vp": 989,
+      "source": "https://consumer.huawei.com/cn/phones/mate60-pro/specs/（dpi 取物理 PPI 近似）"
+    },
+    {
+      "model": "Mate 70 Pro",
+      "foldable": false,
+      "screenW_px": 1316,
+      "screenH_px": 2832,
+      "dpi": 453,
+      "screenW_vp": 465,
+      "screenH_vp": 1000,
+      "source": "https://consumer.huawei.com/cn/phones/mate70-pro/specs/（dpi 取物理 PPI 近似）"
+    },
+    {
+      "model": "Pura 70 Pro",
+      "foldable": false,
+      "screenW_px": 1260,
+      "screenH_px": 2844,
+      "dpi": 457,
+      "screenW_vp": 441,
+      "screenH_vp": 996,
+      "source": "https://consumer.huawei.com/cn/phones/pura70-pro/specs/（dpi 取物理 PPI 近似）"
+    },
+    {
       "model": "Mate X7",
       "foldable": true,
       "foldType": "book",

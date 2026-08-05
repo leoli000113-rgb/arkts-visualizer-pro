@@ -50,6 +50,10 @@ interface StoreState {
   /** 画布缩放倍率（0.2–2，持久化）；渲染内部仍以 1vp = 0.6 CSS px 为基准，缩放靠 CSS transform */
   zoom: number
   setZoom: (z: number) => void
+  /** 画布实际生效缩放（= fitMode 时自适应值，否则 = zoom）：由 App 计算后同步，
+   *  拖拽/调尺寸的 px↔vp 换算必须用它，否则自适应模式下位移与显示不成比例（不持久化） */
+  effZoom: number
+  setEffZoom: (z: number) => void
   /** 节点剪贴簿（Ctrl+C/X/V，深拷贝 IRNode，不持久化） */
   clipboard: IRNode | null
   copyNode: (path: Path) => void
@@ -181,6 +185,8 @@ export const useStore = create<StoreState>()(
         setShowAids: (v) => set({ showAids: v }),
         zoom: 1,
         setZoom: (z) => set({ zoom: Math.min(2, Math.max(0.2, Math.round(z * 100) / 100)) }),
+        effZoom: 1,
+        setEffZoom: (z) => { if (z > 0 && get().effZoom !== z) set({ effZoom: z }) },
         clipboard: null,
         pasteArmed: false,
         setPasteArmed: (v) => set({ pasteArmed: v }),

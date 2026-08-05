@@ -14,6 +14,15 @@ function pxToVp(px: number, dpi: number): number {
   return Math.round((px * 160) / dpi)
 }
 
+/**
+ * vp → px/dpi 合成（vp 直填标定用）：取 1vp = 3px（dpi 480）的常见比率，
+ * round(px×160/480) 精确回到原 vp，档案仍走 px+dpi 存储格式，无需改 schema。
+ * 适用场景：真机/DevEco 预览器实测到 vp 尺寸（px2vp(display.width)）后直接录入。
+ */
+export function vpToPxDpi(w_vp: number, h_vp: number): { screenW_px: number; screenH_px: number; dpi: number } {
+  return { screenW_px: w_vp * 3, screenH_px: h_vp * 3, dpi: 480 }
+}
+
 /** 深拷贝设备条目，并由 px/dpi 重算全部 vp 字段 */
 function withRecomputedVp(profile: any): any {
   const p = JSON.parse(JSON.stringify(profile))

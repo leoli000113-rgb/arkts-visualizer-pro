@@ -158,3 +158,48 @@ describe('Stack 与滚动容器的真机尺寸行为', () => {
     expect(s).toContain('align-self:flex-start')
   })
 })
+
+describe('Tabs/TabContent 的真机尺寸行为', () => {
+  const render4 = (n: IRNode) =>
+    renderToStaticMarkup(createElement(() => renderNode(n, [], null, () => {}, null, false, { states: [] }) as any))
+  const tabContent = (children: IRNode[], mods: IRNode['modifiers'] = []): IRNode =>
+    ({ type: 'TabContent', ctorArgs: [], children, modifiers: mods })
+
+  it('TabContent 用 grid 满格：子组件未显式设尺寸时占满整个内容区（真机占满约束）', () => {
+    const tabs = node('Tabs', [], [tabContent([node('Column')])])
+    const html = render4(tabs)
+    // TabContent 帧：grid + 满格行列；grid stretch 让 auto 尺寸子组件撑满（显式宽高不受影响）
+    expect(html).toContain('display:grid')
+    expect(html).toContain('grid-template-rows:minmax(0, 1fr)')
+    expect(html).toContain('grid-template-columns:minmax(0, 1fr)')
+  })
+  it('barPosition.End 页签栏渲染在内容之后（真机底部 tab）', () => {
+    const tabs: IRNode = {
+      type: 'Tabs',
+      ctorArgs: [{ t: 'obj', v: { barPosition: en('BarPosition.End') } }],
+      children: [tabContent([node('Text', [], [])], [mod('tabBar', { t: 'str', v: '首页' })])],
+      modifiers: [],
+    }
+    const html = render4(tabs)
+    const barIdx = html.indexOf('ir-tabs-bar')
+    expect(barIdx).toBeGreaterThan(-1)
+    expect(html).toContain('ir-tabs-bar end')
+    // 内容（TabContent 帧）在页签栏之前
+    expect(html.indexOf('display:grid')).toBeLessThan(barIdx)
+  })
+  it('落点指示显示时塌缩容器也建立包含块（防指示层逃逸成「蓝屏」）', () => {
+    // wouldCollapse 容器：无显式尺寸且子节点全部 position → 平时保持 static
+    const collapsed = node('Row', [], [
+      node('Scroll', [
+        mod('width', { t: 'str', v: '220%' }),
+        mod('position', { t: 'obj', v: { x: num(6), y: num(3) } }),
+      ], [node('Column')]),
+    ])
+    const html = renderToStaticMarkup(createElement(() =>
+      renderNode(collapsed, [], null, () => {},
+        { path: [], pos: 'inside', parent: [], index: 0 }, false, { states: [] }) as any))
+    const rootStyle = html.match(/data-path="" style="([^"]*)"/)?.[1] ?? ''
+    expect(rootStyle).toContain('position:relative')
+    expect(html).toContain('drop-inside')
+  })
+})

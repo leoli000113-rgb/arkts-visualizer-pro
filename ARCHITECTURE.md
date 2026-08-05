@@ -75,12 +75,13 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 
 ## 4. 保真规则（预览 = 真机语义）
 
-- **单位**：1 vp = 0.6 CSS px（常数）；设备 vp 维度 = round(px × 160 / dpi)。设备档案来自华为官网校准（`devices.json` 带 source URL），应用内可编辑/新增（localStorage 覆盖层）。
+- **单位**：1 vp = 0.6 CSS px（常数）；设备 vp 维度 = round(px × 160 / dpi)。设备档案来自华为官网校准（`devices.json` 带 source URL；主流机型 dpi 取物理 PPI 近似），应用内可编辑/新增（localStorage 覆盖层）；**vp 直填标定**：已知真机 vp 尺寸（px2vp 实测 / DevEco 预览器视口）时直接录入，内部按 1vp=3px（dpi 480）合成 px/dpi 存储，往返精确（`vpToPxDpi`）。**画布与真机比例一致的前提 = 设备档案 vp 尺寸与真机一致**——比例对不上时先校准设备档案。
 - **颜色**：数值 ≤0xFFFFFF 为不透明 RGB；8 位为 **AARRGGBB（ArkTS）→ RRGGBBAA（CSS）** 通道重排；`Color.*` 枚举映射；`'#4a5568'`/`'rgba(...)'` 字符串直通；序列化按值域补 6/8 位（高位 0 不丢）。
 - **默认对齐**：Column 交叉轴默认 Center、Row 交叉轴默认 Center（不是 CSS 的 stretch）；基准字号 16fp = 9.6 CSS px；Button 默认胶囊 + 主题蓝 #0A59F7 白字。
 - **定位/变换**：position/offset/zIndex/alignSelf/visibility/constraintSize + translate/rotate/scale（transform 合成）。**定位包含块真机语义**：非塌缩节点基线 `position: relative`（ArkUI `.position` 相对父组件）；无显式尺寸且全部子节点出流的塌缩容器保持 static，position 子节点上溯到有大小的祖先（百分比尺寸随之按大容器解析，与真机一致）；选中/落点/位置调整高亮只加 outline 绝不动 position——布局不随选中态变化。position/offset 支持百分比字符串（translate 百分比相对自身宽高）。负值参数（parser 记 raw 一元表达式）经求值感知通道照常生效。
 - **Stack 尺寸**：CSS grid 同格层叠（`gridArea:1/1`），Stack 尺寸 = 最大子节点（ArkUI 语义，不再塌缩为 0）；基线 `alignSelf:stretch` 对齐 ArkUI「百分比按父级提供的约束解析」（Stack{Column(100%)} 真机满宽）；`.position()` 子节点相对 Stack 本层定位。
 - **滚动容器默认占满交叉轴**：Scroll/List/Grid/Tabs 基线 `alignSelf:stretch`（ArkUI 滚动容器默认占满父组件交叉轴，不写 width 也满宽）；显式 width/alignSelf 自然覆盖。
+- **TabContent 独子占满约束**：TabContent 大小 = Tabs 内容区（宽撑满、高 = Tabs − TabBar），其独子未显式设尺寸时充满整个区域（真机上 `Column.justifyContent(Center)` 才能垂直居中）——渲染为 grid 满格（`minmax(0,1fr)`），auto 尺寸子组件默认 stretch 撑满、显式宽高不受影响。Tabs 支持 `barPosition.Start/End`（页签栏顶/底）与 `vertical(true)`（竖排左/右）。
 - **系统栏安全区**：画布默认显示手机状态栏（18px≈30vp，时间 + 信号/Wi-Fi/电池图标）与底部手势导航条（12px≈20vp），应用区 `.app-area` = 屏幕 − 系统栏（真机非沉浸布局，根 100% 高 = 应用区高）；顶栏「系统栏」开关（`systemBars` 持久化，默认开）。
 - **表达式小求值**（`shared.evalExpr`，禁 eval）：字面量/`this.x`/三元/比较/&& || ??/!/加减乘除/拼接/成员访问（`.prop` `?.prop` `[i]`，含 `.length`），求不出一律回退原文。styleOf 与 resolveStr/Num/Bool 全部走求值感知版；`if` 条件折叠同样走求值器。
 - **@Styles/@Extend 展开**：`@Styles name()` 与 `@Extend(Comp) name()`（struct 成员与全局 function 均支持）解析成样式表（`renderer/styleTable.ts`）；0 参样式调用在 styleOf 就地展开（@Extend 组件专属优先），本机后续修饰符自然覆盖。
@@ -95,7 +96,7 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 
 ## 5. 编辑能力清单
 
-- 拖放：面板 → 画布/大纲树（before/inside/after 三态落点）；同父/跨容器搬运；Stack 内按坐标自由摆放（`.position`）；拖拽中有跟手标签（ghost）。**独子容器重定向**：落到已满的 Scroll/TabContent/Badge 中部自动深入其内层容器（`descendFullSingleChild`，高亮跟随最终目标）。**画布容器落点重设计**：before/after 收窄为 ~10px 像素边带（防大容器留白误判到容器外），inside 按指针位置就近插入（最近子节点之后，Stack 除外）；before/after 被约束拒绝时回退 inside。**大纲树边带 20%**：树内中部 60% 一律进容器，拖拽悬停收合容器 600ms 自动展开。**健壮性**：onMove 检测 `e.buttons === 0` 兜底错过的 pointerup（窗外松开不再卡死落点层），onMove/onUp 全 try/catch 收尾，右键按下不起拖拽；**DOM 查询限定 `.phone-screen` 范围**（模板缩略图同带 data-path，拖到面板上不再误解析）。
+- 拖放：面板 → 画布/大纲树（before/inside/after 三态落点）；同父/跨容器搬运；Stack 内按坐标自由摆放（`.position`）；拖拽中有跟手标签（ghost）。**独子容器重定向**：落到已满的 Scroll/TabContent/Badge 中部自动深入其内层容器（`descendFullSingleChild`，高亮跟随最终目标）。**画布容器落点重设计**：before/after 收窄为 ~10px 像素边带（防大容器留白误判到容器外），inside 按指针位置就近插入（最近子节点之后，Stack 除外）；before/after 被约束拒绝时回退 inside。**大纲树边带 20%**：树内中部 60% 一律进容器，拖拽悬停收合容器 600ms 自动展开；**树面板空白区吸附最近行**（行间隙/末尾空白拖入不丢）+ 拖近树视口上下沿自动滚动。**「位置调整」子树提升**：nudge 模式下画布按下点命中的是最内层子组件，落点在 nudge 目标子树内即提升拖拽目标到 nudge 节点（`resolveDragStart`），微调父组件不再误拖子组件。**健壮性**：onMove 检测 `e.buttons === 0` 兜底错过的 pointerup（窗外松开不再卡死落点层），onMaybeMove/onMove/onUp 全 try/catch 收尾，右键按下不起拖拽；**DOM 查询限定 `.phone-screen` 范围**（模板缩略图同带 data-path，拖到面板上不再误解析）；**画布落点覆盖层 CSS 限定 `.phone-screen` 作用域**（大纲树行高亮同用 drop-inside 类名，裸类名 position:absolute+inset:0 会让树行变成覆盖整个面板的蓝色层——「拖入树蓝屏 + 不灵敏」的根因）；落点指示显示时帧强制 `position:relative`（塌缩容器也不例外，指示层不逃逸）。
 - **粘贴模式**：复制/剪切即开启（提示条 + copy 光标），点击容器 = 放入内部末尾（独子下钻）、点击组件 = 放到其后，可连续多处；Esc/✕/点空白/代码变更/撤销重做退出（`pasteArmed/pasteAt`）。
 - **「位置调整」模式（画布右键菜单）**：开启后拖拽该组件只改 `.offset` 不动结构（橙色虚线框 + 提示条；方向键 1vp/Shift 10vp 微调，连按合并一步撤销）；Esc/✕/菜单退出，结构变更自动退出。大纲树拖拽不受影响（保持结构化移动）。**Alt + 拖拽** = 等效快捷方式；右/下/右下三个把手改宽/高/同时改。
 - **对齐吸附**：Alt 偏移与 Stack 落点时，±3vp 内自动吸附兄弟/容器的边缘与中线，并绘制玫红参考线。
@@ -105,15 +106,15 @@ raw 重建用 **token 间原始空白**拼接（tokenizer 记录 pos/end），�
 - 属性面板：**专属区由 registry 的 FieldSpec schema 驱动** + 全量通用属性（布局+外观）+ 感叹号中文说明 + 「全部修饰符」兜底（可增删任意修饰符）。
 - 撤销/重做（Ctrl+Z/Y，50 步；连续手势合并为一步）、Delete 删除。
 - 节点剪贴簿：Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+V 粘贴（选中容器可接收则放入其内，否则落到选中节点之后；粘贴同样过子类型/独子约束）/ Ctrl+D 创建副本。
-- 画布缩放：左上缩放条（−/百分比点按重置/+ /适应窗口，0.2–2）；**「适应」为常开模式（默认开，持久化）**——ResizeObserver 监听画布可用空间与设备视口自动重算缩放，手动 −/+ 即退出回手动模式。实现为 phone-frame 的 CSS transform，渲染内部仍以 1vp = 0.6px 为基准，dnd/resize 的指针换算统一走 `pxPerVp() = 0.6 × zoom`。
+- 画布缩放：左上缩放条（−/百分比点按重置/+ /适应窗口，0.2–2）；**「适应」为常开模式（默认开，持久化）**——ResizeObserver 监听画布可用空间与设备视口自动重算缩放，手动 −/+ 即退出回手动模式。实现为 phone-frame 的 CSS transform，渲染内部仍以 1vp = 0.6px 为基准。**px↔vp 唯一换算口径 `pxPerVp() = 0.6 × effZoom`**（`editor/scale.ts`）：effZoom = 实际生效缩放（fitMode 时自适应值，否则 = zoom），由 App 计算后同步进 store——dnd 位移/Stack 落点/resize 把手全部走它，fit ≠ zoom 时不会再出现「画布拖一点、真机跑很远」。
 - 侧栏搜索框：页面（文件名/媒体名）/ 组件（按组名/组件名）/ 组件库 / 模板（按名称/描述）四页签共用过滤。
 - **项目模式（多页面）**：顶栏「导入项目」读取所选目录（webkitdirectory）——全部 `.ets/.ts`、图片/视频（单文件 ≤12MB 转 dataURL）、`resources element` 的 color/string json；侧栏「页面」页签列出全部文件（@Entry 标 ⌂）与媒体缩略图（可移除）。当前页 code 始终与 `files[currentFile]` 同步（setCode 写回 + 切换时写回），撤销历史随换页清空。
 - **交互预览**：顶栏开关。开启后画布右上页面栏显示「◀ 返回（导航栈非空时）+ 当前页名 + 交互预览徽标」；点击命中 router 导航的组件执行跳转而非选中（`frameOf` 拦截）。Stack 折叠分支不再产出空绝放层（原会拦截整屏点击）。
-- 模板：**即时缩图预览**（renderer 直接渲染模板 IR 的缩略卡）；套用可撤销——`setCode(code, { keepHistory: true })` 把当前页压入历史栈；普通代码源变更（导入/手改/重置）仍清空两栈。
+- 模板：**等比缩图预览**——按当前设备视口渲染完整手机屏结构（`.phone-static` + `.app-area` + 系统栏，与画布同一份 StatusBar/NavBar 标记，见 `renderer/PhoneChrome.tsx`），再按卡片宽/高双向取小整体 scale（卡片固定 180px 高，长屏设备不会过长），缩放后视觉居中；缩略图与画布布局比例逐点一致（不能用 `.phone-screen` 类，dnd 按该类限定画布范围）。套用可撤销——`setCode(code, { keepHistory: true })` 把当前页压入历史栈；普通代码源变更（导入/手改/重置）仍清空两栈。
 - 代码窗：**CodeMirror 6**（TS 高亮/行号/括号匹配），输入防抖 400ms 解析（失焦立即 flush）；**解析失败保留最后一次成功的 IR**——画布不闪白，错误在代码窗顶部红色横幅 + 编辑器内 lint 标记（gutter 红点，位置由 parser 报错文本提取）展示。
 - 顶栏：复制代码、导出 .ets、设备切换/折叠态、设备档案编辑/新增、编译风险警示、快捷键说明弹窗（?）。
 
-## 6. 测试策略（195 项，防退化锚点）
+## 6. 测试策略（208 项，防退化锚点）
 
 ```
 parser.test.ts      v1 子集 + sample_full 全景：往返幂等、If/ForEach/raw
@@ -124,13 +125,17 @@ validate.test.ts    编译约束校验（Scroll 独子等，对齐 hvigor 报错
 store.test.ts       撤销重做/手势合并/右键菜单动作/剪贴簿/模板历史/22 种默认值往返
 registry.test.ts    registry 完整性：SUPPORTED 全覆盖/面板分组/默认节点往返/约束派生
 dnd.test.ts         落点计算：独子容器重定向（Scroll→内层 Column）/前后插入/约束拦截/
-                    move 搬运重定向 + 画布模式（窄边带/最近子位置/约束回退/根独子保护）
+                    move 搬运重定向 + 画布模式（窄边带/最近子位置/约束回退/根独子保护）/
+                    resolveDragStart 位置调整模式子树提升
+scale.test.ts       pxPerVp 换算口径跟随 effZoom（含自适应 fit），拒绝非正值
+devices.test.ts     vp 换算/vpToPxDpi 往返精确/内置档案一致性/新增机型与 360 基准
 library.test.tsx    22 个复合组件全链路：makeNode → serialize → parse → SSR 渲染
                     不抛错 + 只用已注册组件类型（防「拖入即崩」回归）
 project.test.tsx    import 提取/路径与路由解析/媒体与资源分类/跨文件组件表/
                     router 动作提取/resolveMediaRef/Image+字符串资源 SSR
 projectStore.test.ts 整项目导入/导航栈/跨文件组件表/换页写回/单文件退出项目模式
-fidelity.test.tsx   颜色通道/序列化补齐/通用属性 CSS 映射/默认外观
+fidelity.test.tsx   颜色通道/序列化补齐/通用属性 CSS 映射/默认外观/Stack 与滚动容器尺寸/
+                    Tabs 占满约束与 barPosition/落点指示包含块
 fidelity2.test.tsx  evalExpr 求值器/ForEach 对象数组与 index/@Styles/@Extend 展开/
                     自定义组件/@Builder 带参/修饰符包/新组件冒烟
 renderer.test.tsx   SSR 冒烟：sample.ets 不回归、sample_full 全树关键内容
@@ -168,8 +173,8 @@ app/src/
 │              + containers/forms/feedback/flow + RelativeContainer（约束求解引擎）
 │              + styleTable（@Styles 提取）+ components（同文件组件提取）+ resize
 ├─ editor/     dnd（落点/独子重定向/画布窄边带与就近插入/位置调整模式/Alt 偏移/Stack 定位
-│              /吸附参考线/ghost/兜底收尾）
-│              + OutlineTree（行内 ＋/⧉/✕ + 插入选择器）+ dnd 测试
+│              /吸附参考线/ghost/兜底收尾）+ scale（px↔vp 唯一换算口径 = 0.6 × effZoom）
+│              + OutlineTree（行内 ＋/⧉/✕ + 插入选择器）+ dnd/scale 测试
 │              + PropertyPanel（schema 驱动）+ DeviceEditor + ContextMenu + ErrorBoundary
 ├─ panels/     TopBar + SidePanel（页面/组件/组件库/模板+搜索）+ ZoomBar + CodePane
 │              （CodeMirror）+ HelpModal + TemplateThumb + dock（三边停靠 + 大纲树固定条）

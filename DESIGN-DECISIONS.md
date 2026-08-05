@@ -475,3 +475,32 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - **粘贴模式**：复制/剪切即开启（绿色提示条 + copy 光标），此后**点击容器 = 放入其内部末尾（独子已满自动下钻内层）、点击组件 = 放到其后**，可连续点击多处（复制一次即可）；Esc / 提示条 ✕ / 点空白 / 代码变更 / 撤销重做退出。frameOf 点击带 `.phone-screen` 限定（缩略图点击不触发）；store 新增 `pasteArmed/pasteAt`（`descendFullSingleChild` 随之从 dnd 迁至 ir/constraints，供 store 与 dnd 共用，原路径 re-export 不变）。
 - **大纲树拖入容器更简单**：树内 before/after 边带 30% → 20%（中部 60% 一律进容器）；拖拽悬停收合容器 600ms 自动展开；任何来源的选中都会自动展开其全部祖先行（zustand subscribe 实现，避开 effect 内同步 setState）——落进收合容器的新组件立即可见。
 - 测试 195/195 绿（+7：pasteAt 五项 + Stack grid/滚动容器 stretch 两项），typecheck/lint/build 全绿；Playwright 18 项断言：轮播位 150vp 满宽、热门推荐可视、Checkbox 点击翻转互不影响、List/ListItem 满宽、粘贴模式全流程（提示条/进容器/连续/Esc/退出不粘贴）、树内拖入 Stack、缩略图隔离拖拽不崩。
+
+## 27. TabContent 占满约束 + 位置调整子树提升 + drop-inside 类名冲突根治（2026-08-01）
+
+针对「带Tab首页推荐内容画布靠上、真机居中（同类位置偏差还有多处）」「大纲树选中 Grid 开位置调整却移动了子组件」「画布组件拖进大纲树不灵敏且有概率蓝屏」三个反馈：
+
+- **TabContent 独子占满约束（位置偏差的根因）**：真机 TabContent 大小 = Tabs 内容区（宽撑满、高 = Tabs − TabBar），独子未显式设尺寸时**充满**整个区域——模板 `Column.justifyContent(FlexAlign.Center)` 因此垂直居中；画布原先让子组件包裹内容，居中/百分比全部失效、内容堆顶。修复：TabContentView 改 grid 满格（`minmax(0,1fr)` 行列）——auto 尺寸子组件默认 stretch 撑满，显式宽高不受 stretch 影响，与真机一致。模板范围排查结论：24 个模板里只有「带Tab首页」踩中（其余 justifyContent 都在显式 100% 高的根容器上，本就生效）；但导入的真实代码凡是 Tabs 内用居中/百分比布局的都受益。顺带补齐 Tabs `barPosition.End`（页签栏置底，真机主页高频写法）与 `vertical(true)`（竖排左/右栏）渲染。
+- **「位置调整」移动到子组件的修复**：画布按下点命中的是最内层子组件（beginMaybeMove 冒泡首站），nudge 判定原先要求路径完全相等——点在 Grid 的子组件上永远不匹配，于是变成结构化拖动子组件。现 `resolveDragStart`（纯函数，3 项单测）：按下点落在 nudge 目标子树内（含自身）即把拖拽目标提升到 nudge 节点并走偏移模式；子树外保持原行为，树内拖拽不受 nudge 影响。
+- **拖入大纲树蓝屏 + 不灵敏的根因（类名冲突）**：大纲树行内高亮用 `drop-inside` 类名，而画布覆盖层样式是裸类名规则 `.drop-inside { position:absolute; inset:0; pointer-events:none; … }`——树行一旦显示 inside 高亮，立即变成 absolute 满锚覆盖层：整个大纲树面板蒙蓝（E2E 实测 259×868 = 面板全尺寸，覆盖率 83%），且 pointer-events:none 让树行脱离命中检测 → 落点闪烁/丢失 = 「不灵敏」。修复：画布覆盖层三类（.drop-line/.drop-line-top/bottom/.drop-inside）全部限定 `.phone-screen` 作用域；同时 frameOf 在显示落点指示时强制 `position:relative`（塌缩容器也不例外）——指示层永不逃逸出目标帧。修后 E2E 覆盖率 83% → 2.3%（恰为 Stack 本区）。
+- **树拖入更好拖**：指针在树面板内但未命中行（行间隙/末尾空白/缩进留白）时吸附到最近行（ratio 自然越界 → 首行之前/末行之后）；拖近树视口上下沿 28px 内自动滚动；onMaybeMove 增加 try/catch 兜底（预备拖拽异常不再卡死手势）。
+- 测试 201/201 绿（+6：TabContent grid 满格/barPosition 底栏顺序/落点指示包含块/resolveDragStart 三项），typecheck/lint/build 全绿；Playwright 实测：带Tab首页 Column 高 = TabContent 高且文本垂直居中、nudge 拖子组件区域写入的是 Grid 的 .offset({x:50,y:33.3})、画布拖「推荐内容」进树 Stack 行成功且拖拽中/拖拽后无蓝色覆盖层残留。
+
+
+## 28. px↔vp 换算统一 effZoom + 模板缩略图等比重构（2026-08-01）
+
+针对「画布上只拖了一点，到手机上却跑出很远（画布与手机整体比例不对齐）」「模板缩略图与画布显示不一致」两个反馈：
+
+- **拖拽/调尺寸比例失真的根因**：画布渲染用「实际生效缩放」effZoom（fitMode 默认开启，随窗口自适应，常见 120–160%），而 dnd 的 `pxPerVp()` 与 resize 的 `toVp` 一直除以 `0.6 × zoom`（手动缩放值，默认 1）——fit ≠ zoom 时，所有 px→vp 换算（Alt/位置调整偏移、Stack 落点 position、尺寸把手、吸附阈值）都按 `effZoom/zoom` 倍放大：141% 缩放下拖 100px 会写出 141px 对应的 vp，落回真机自然「跑很远」。修复：store 新增 `effZoom`（App 计算后 useEffect 同步，不持久化），新增 `editor/scale.ts` 导出唯一换算口径 `pxPerVp()`，dnd 与 resize 统一改用它。E2E 实测（141% 自适应下）：Alt 拖 100px → 元素移动 100.0px。
+- **模板缩略图等比重构**：旧实现把模板 IR 渲染在固定 278px 宽、scale(0.63) 的盒子里——与设备视口（如 Mate 80 Pro Max 464vp → 278.4px 仅是巧合）和画布毫无关系，`width('100%')`/`height('100%')`/字体比例全按错误基准解析。现缩略图 = 画布手机屏的等比微缩：按当前设备视口（vp×0.6 CSS px）渲染完整手机屏结构（`.phone-static` + `.app-area` + 系统栏，跟随 store 的 systemBars 开关），再按卡片实测宽度整体 `transform: scale`，容器高由内联 aspect-ratio（= 设备屏比例）推出——换设备/折叠态缩略图同步变化。注意缩略图容器**不能用 .phone-screen 类**（dnd 的 elOf 按该类限定画布范围，缩略图带 data-path 会抢先命中），故新增共享类 `.phone-static`（index.css 与 .phone-screen 同声明）。状态栏/导航条 SVG 抽为 `renderer/PhoneChrome.tsx`（StatusBar/NavBar），App 画布与缩略图共用同一份标记。
+- 测试 204/204 绿（+3：scale.test.ts 的 pxPerVp 口径），typecheck/lint/build 全绿；Playwright 实测：3 个模板缩略图与画布的首子宽比/顶距比偏差 Δ0.000。
+
+
+## 29. 设备 vp 标定 + 模板全量居中审计 + 缩略图限高（2026-08-01）
+
+针对「画布字体/组件与屏幕的比例和真机仍不一致（画布移一点、真机移很多）」「部分模板画布不居中、真机居中」「模板缩略图太长」三个反馈：
+
+- **比例不一致的剩余主因 = 设备档案 vp 与真机不符**（画布拖 N vp 在 464vp 档案上是 N/464，在 360vp 真机上就是 N/360——相对位移天然放大约 29%）。响应：① 设备档案新增 **vp 直填标定**（`vpToPxDpi` 按 1vp=3px/dpi480 合成存储，往返精确，有单测）——用户用真机 `px2vp(display.getDefaultDisplaySync().width)` 或 DevEco 预览器视口尺寸即可精确对齐；② `devices.json` 新增主流机型（Mate 60 Pro / Mate 70 Pro / Pura 70 Pro，dpi 取官网物理 PPI 近似）与「标准 360 基准」（1080×2340@480 = 360×780vp，DevEco 模拟器/设计稿常用基准）。顶栏本就有「W × H vp」常显，方便对照。
+- **模板居中审计（Playwright 数值化）**：28 个模板全部套用，对所有 `justify-content ≠ flex-start` 的容器比较「子内容块实际起始位置」与「按该对齐值应有的起始位置」（容差 6px）——**全部一致，无「画布堆顶、真机居中」案例**；此前同类问题（TabContent 占满）修复仍有效。结论：当前模板渲染与 ArkUI 对齐语义自洽，用户感知的残留居中偏差主要由设备 vp 不符引起（固定 vp 边距/position 在不同 vp 宽上占比不同）。
+- **缩略图限高**：卡片固定 180px 高，缩放取宽/高双向最小值（min-fit），按缩放后视觉尺寸居中——长屏设备（1000+ vp）缩略图不再超长，且整屏等比完整可见（与画布比例逐点一致的特性不变，E2E 实测宽比/顶距比 Δ0.000）。
+- 测试 208/208 绿（+4：devices.test.ts），typecheck/lint/build 全绿；E2E：vp 直填 430×930 保存后顶栏即时生效、切 360 基准设备画布视口同步。

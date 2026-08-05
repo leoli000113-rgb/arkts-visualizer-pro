@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { computeDrop, startNewDrag, startMoveDrag, endDrag } from './dnd'
+import { computeDrop, startNewDrag, startMoveDrag, endDrag, resolveDragStart } from './dnd'
 import { IRNode } from '../ir/types'
 
 const str = (v: string) => ({ t: 'str' as const, v })
@@ -123,5 +123,29 @@ describe('computeDrop 画布模式（窄边带 + 最近子位置 + 约束回退�
     expect(before).toMatchObject({ pos: 'before', parent: [], index: 0 })
     const after = computeDrop(root, [0], 0.6, fakeBox, 50, 24, true, 40)
     expect(after).toMatchObject({ pos: 'after', parent: [], index: 1 })
+  })
+})
+
+describe('resolveDragStart 位置调整模式的目标提升', () => {
+  it('按下点落在 nudge 子树内（命中子组件）→ 提升到 nudge 节点 + 偏移模式', () => {
+    // 大纲树选中 Grid=[1]，画布按在其孙组件 [1,0,2] 上
+    expect(resolveDragStart([1, 0, 2], false, [1], false))
+      .toEqual({ dragPath: [1], alt: true })
+    // 正好按在 nudge 节点本身
+    expect(resolveDragStart([1], false, [1], false))
+      .toEqual({ dragPath: [1], alt: true })
+  })
+  it('按下点在 nudge 子树外 → 保持原目标，不进入偏移模式', () => {
+    expect(resolveDragStart([0, 3], false, [1], false))
+      .toEqual({ dragPath: [0, 3], alt: false })
+    // nudge 是更深节点（按下点是祖先）→ 不提升
+    expect(resolveDragStart([1], false, [1, 0], false))
+      .toEqual({ dragPath: [1], alt: false })
+  })
+  it('大纲树发起的拖拽不受 nudge 影响；Alt 键始终强制偏移模式', () => {
+    expect(resolveDragStart([1, 0], true, [1], false))
+      .toEqual({ dragPath: [1, 0], alt: false })
+    expect(resolveDragStart([0, 3], false, null, true))
+      .toEqual({ dragPath: [0, 3], alt: true })
   })
 })
