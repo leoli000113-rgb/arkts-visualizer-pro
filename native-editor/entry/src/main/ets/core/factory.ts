@@ -50,17 +50,20 @@ export function newNodeFor(type: string): IRNode {
     case 'Scroll':
     case 'List':
       return base(type, [
+        { name: 'width', args: [str('100%')] },
         { name: 'height', args: [num(200)] },
         { name: 'backgroundColor', args: [str('#f0f0f0')] },
       ])
     case 'Grid':
       return base('Grid', [
+        { name: 'width', args: [str('100%')] },
         { name: 'height', args: [num(200)] },
         { name: 'columnsTemplate', args: [str('1fr 1fr')] },
         { name: 'backgroundColor', args: [str('#f0f0f0')] },
       ])
     case 'Swiper':
       return base('Swiper', [
+        { name: 'width', args: [str('100%')] },
         { name: 'height', args: [num(160)] },
         { name: 'backgroundColor', args: [str('#f0f0f0')] },
       ])

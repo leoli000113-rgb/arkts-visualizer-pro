@@ -9,8 +9,8 @@ import { serialize } from '../core/serialize';
 import { IRFile, IRNode } from '../core/ir';
 import { buildScope } from '../core/exprEval';
 import {
-  deleteAtPath, duplicateAtPath, insertAuto, keyToPath, moveBy, nodeAtPath,
-  readNumModifier, readStrModifier, readTextArg,
+  deleteAtPath, duplicateAtPath, insertAuto, keyToPath, moveBy, nodeAtPath, pathKey,
+  readNumModifier, readOffset, readStrModifier, readTextArg,
   setColorModifier, setLengthModifier, setTextArg,
 } from '../core/mutate';
 import { CONTAINER_TYPES, newNodeFor } from '../core/factory';
@@ -102,6 +102,14 @@ struct Index {
   private panLastX: number = 0;
   private panLastY: number = 0;
   private pending: Map<string, string> = new Map();
+  /** 几何键：画布点选时可能带 ForEach 实例后缀（'0.3#1.0'），只用于定位/直写，不用于 IR 操作 */
+  private selGeoKey: string = '';
+  private dragging: boolean = false;
+  private dragBaseX: number = 0;
+  private dragBaseY: number = 0;
+  private dragAccX: number = 0;
+  private dragAccY: number = 0;
+  private selTimer: number = -1;
 
   private curFile(): IRFile {
     return this.pages[this.curPage].file;
@@ -123,7 +131,16 @@ struct Index {
       });
     }
     this.previewCtl.onTapNode = (p: string) => this.onNodeTap(p);
+    // 选中框跟随轮询：滚动/布局/窗口变化时自动重新对齐（值不变不写状态，空闲零开销）
+    this.selTimer = setInterval(() => this.syncSelRect(), 120);
     this.refreshTree();
+  }
+
+  aboutToDisappear(): void {
+    if (this.selTimer >= 0) {
+      clearInterval(this.selTimer);
+      this.selTimer = -1;
+    }
   }
 
   /** IR 变化后：重建画布 + 刷新大纲/属性/代码 + 稍后重查选中框（等布局完成） */
@@ -133,30 +150,49 @@ struct Index {
     this.rows = flattenOutline(f.root, this.collapsed);
     this.code = serialize(f);
     this.ver++;
-    setTimeout(() => this.refreshSelRect(), 90);
+    setTimeout(() => this.syncSelRect(), 90);
   }
 
-  private refreshSelRect(): void {
-    if (this.selPath === '') {
-      this.showSel = false;
+  /**
+   * 把选中框对齐到节点当前实际位置（窗口坐标 - 画布原点）。
+   * 仅在数值变化时写 @State；拖拽期间跳过（拖拽由手势直接驱动盒子和节点）。
+   */
+  private syncSelRect(): void {
+    if (this.dragging) return;
+    if (this.selGeoKey === '' || this.showCode) {
+      if (this.showSel) this.showSel = false;
       return;
     }
-    const r = this.previewCtl.queryRect(this.selPath);
+    const r = this.previewCtl.queryRect(this.selGeoKey);
     if (r === null) {
-      this.showSel = false;
+      if (this.showSel) this.showSel = false;
       return;
     }
-    this.selX = r.x - this.canvasOX;
-    this.selY = r.y - this.canvasOY;
-    this.selW = r.w;
-    this.selH = r.h;
-    this.showSel = true;
+    const x = r.x - this.canvasOX;
+    const y = r.y - this.canvasOY;
+    if (!this.showSel || Math.abs(x - this.selX) > 0.5 || Math.abs(y - this.selY) > 0.5 ||
+      Math.abs(r.w - this.selW) > 0.5 || Math.abs(r.h - this.selH) > 0.5) {
+      this.selX = x;
+      this.selY = y;
+      this.selW = r.w;
+      this.selH = r.h;
+      this.showSel = true;
+    }
   }
 
+  /** 选中：p 可能带 ForEach 实例后缀（画布点选）；selPath 归一化为模板路径用于 IR 操作 */
   private onNodeTap(p: string): void {
-    this.selPath = p;
+    this.selPath = pathKey(keyToPath(p));
+    this.selGeoKey = p;
     this.ver++;
-    this.refreshSelRect();
+    this.syncSelRect();
+  }
+
+  /** 拖拽收尾：重建一次树（IR 已在拖拽中累积好），让代码/大纲/选中框全部归位 */
+  private endDrag(): void {
+    if (!this.dragging) return;
+    this.dragging = false;
+    this.refreshTree();
   }
 
   private selNode(): IRNode | null {
@@ -168,6 +204,7 @@ struct Index {
     if (deleteAtPath(this.curFile().root, keyToPath(path))) {
       if (this.selPath === path || this.selPath.startsWith(path + '.')) {
         this.selPath = '';
+        this.selGeoKey = '';
         this.showSel = false;
       }
       this.refreshTree();
@@ -179,6 +216,7 @@ struct Index {
     const np = duplicateAtPath(this.curFile().root, keyToPath(path));
     if (np !== null) {
       this.selPath = np.join('.');
+      this.selGeoKey = this.selPath;
       this.refreshTree();
     }
   }
@@ -205,6 +243,7 @@ struct Index {
     this.redoStack.push(serialize(this.curFile()));
     this.pages[this.curPage].file = parse(prev);
     this.selPath = '';
+    this.selGeoKey = '';
     this.showSel = false;
     this.canUndo = this.undoStack.length > 0;
     this.canRedo = true;
@@ -217,6 +256,7 @@ struct Index {
     this.undoStack.push(serialize(this.curFile()));
     this.pages[this.curPage].file = parse(next);
     this.selPath = '';
+    this.selGeoKey = '';
     this.showSel = false;
     this.canRedo = this.redoStack.length > 0;
     this.canUndo = true;
@@ -229,6 +269,7 @@ struct Index {
     const np = insertAuto(this.curFile().root, keyToPath(this.selPath), newNodeFor(type), CONTAINER_TYPES);
     if (np !== null) {
       this.selPath = np.join('.');
+      this.selGeoKey = this.selPath;
       this.statusText = `已添加 ${type}`;
       const n = this.selNode();
       hilog.info(0x0000, TAG, 'addComponent: selPath=%{public}s, nodeType=%{public}s, rootChildren=%{public}d',
@@ -241,6 +282,7 @@ struct Index {
     if (i === this.curPage || i < 0 || i >= this.pages.length) return;
     this.curPage = i;
     this.selPath = '';
+    this.selGeoKey = '';
     this.showSel = false;
     this.collapsed.clear();
     this.refreshTree();
@@ -350,13 +392,35 @@ struct Index {
         .height(30)
         .scrollBar(BarState.Off)
 
-        this.TopButton('模板', this.showTemplates, () => { this.showTemplates = !this.showTemplates; })
-        this.TopButton('代码', this.showCode, () => { this.showCode = !this.showCode; })
-        this.TopButton('导入', false, () => { this.doImport(); })
-        this.TopButton('导出', false, () => { this.doExport(); })
-        this.TopButton('撤销', false, () => { this.undo(); })
-        this.TopButton('重做', false, () => { this.redo(); })
-        this.TopButton(this.moveMode ? '退出移动' : '移动', this.moveMode, () => { this.moveMode = !this.moveMode; })
+        // 切换类按钮必须内联：@Builder 按值参数不响应状态变化（label/高亮会冻住）
+        Button(this.showTemplates ? '收起模板' : '模板')
+          .fontSize(11)
+          .height(28)
+          .padding({ left: 8, right: 8 })
+          .margin({ left: 4 })
+          .backgroundColor(this.showTemplates ? '#0A59F7' : '#e5e5ea')
+          .fontColor(this.showTemplates ? '#ffffff' : '#333333')
+          .onClick(() => { this.showTemplates = !this.showTemplates; })
+        Button(this.showCode ? '关闭代码' : '代码')
+          .fontSize(11)
+          .height(28)
+          .padding({ left: 8, right: 8 })
+          .margin({ left: 4 })
+          .backgroundColor(this.showCode ? '#0A59F7' : '#e5e5ea')
+          .fontColor(this.showCode ? '#ffffff' : '#333333')
+          .onClick(() => { this.showCode = !this.showCode; })
+        this.TopButton('导入', () => { this.doImport(); })
+        this.TopButton('导出', () => { this.doExport(); })
+        this.TopButton('撤销', () => { this.undo(); })
+        this.TopButton('重做', () => { this.redo(); })
+        Button(this.moveMode ? '退出移动' : '移动')
+          .fontSize(11)
+          .height(28)
+          .padding({ left: 8, right: 8 })
+          .margin({ left: 4 })
+          .backgroundColor(this.moveMode ? '#0A59F7' : '#e5e5ea')
+          .fontColor(this.moveMode ? '#ffffff' : '#333333')
+          .onClick(() => { this.moveMode = !this.moveMode; })
       }
       .width('100%')
       .padding({ left: 8, right: 8, top: 4, bottom: 2 })
@@ -377,80 +441,113 @@ struct Index {
         this.LibraryPanel()
 
         // 画布 + 选中框 + 代码视图
+        // 注意：内层 Stack 必须零 padding——onAreaChange 的 globalPosition 与 .position() 的
+        // 定位基准在「带 padding 时相对边框盒还是内容盒」上不一致（实测差一个 padding），
+        // 零 padding 下两者重合，选中框坐标才严格等于 节点窗口坐标 - 内层 Stack 原点。
         Stack() {
-          EditorCanvas({ controller: this.previewCtl })
-            .width('100%')
-            .height('100%')
-            .visibility(this.showCode ? Visibility.Hidden : Visibility.Visible)
-          if (this.showSel && !this.showCode) {
-            Column()
-              .width(this.selW)
-              .height(this.selH)
-              .position({ x: this.selX, y: this.selY })
-              .border({ width: 2, color: '#0A59F7' })
-              .backgroundColor('#1a0A59F7')
-              .hitTestBehavior(HitTestMode.None)
-          }
-          if (this.showCode) {
-            Column() {
-              Row() {
-                Text('生成的 .ets 源码')
-                  .fontSize(12)
-                  .fontColor('#666666')
-                  .layoutWeight(1)
-                Button('复制')
-                  .fontSize(12)
-                  .height(28)
-                  .onClick(() => this.doCopyCode())
-              }
+          Stack() {
+            EditorCanvas({ controller: this.previewCtl })
               .width('100%')
-              .padding({ bottom: 6 })
-              Scroll() {
-                Text(this.code)
-                  .fontSize(11)
-                  .fontFamily('monospace')
-                  .fontColor('#333333')
-                  .width('100%')
-                  .textAlign(TextAlign.Start)
-                  .copyOption(CopyOptions.LocalDevice)
-              }
-              .layoutWeight(1)
-              .width('100%')
+              .height('100%')
+              .visibility(this.showCode ? Visibility.Hidden : Visibility.Visible)
+            if (this.showSel && !this.showCode) {
+              Column()
+                .width(this.selW)
+                .height(this.selH)
+                .position({ x: this.selX, y: this.selY })
+                .border({ width: 2, color: '#0A59F7' })
+                .backgroundColor('#1a0A59F7')
+                .hitTestBehavior(HitTestMode.None)
             }
-            .width('100%')
-            .height('100%')
-            .padding(8)
-            .backgroundColor('#ffffff')
-            .borderRadius(8)
+            if (this.showCode) {
+              Column() {
+                Row() {
+                  Text('生成的 .ets 源码')
+                    .fontSize(12)
+                    .fontColor('#666666')
+                    .layoutWeight(1)
+                  Button('复制')
+                    .fontSize(12)
+                    .height(28)
+                    .onClick(() => this.doCopyCode())
+                }
+                .width('100%')
+                .padding({ bottom: 6 })
+                Scroll() {
+                  Text(this.code)
+                    .fontSize(11)
+                    .fontFamily('monospace')
+                    .fontColor('#333333')
+                    .width('100%')
+                    .textAlign(TextAlign.Start)
+                    .copyOption(CopyOptions.LocalDevice)
+                }
+                .layoutWeight(1)
+                .width('100%')
+              }
+              .width('100%')
+              .height('100%')
+              .padding(8)
+              .backgroundColor('#ffffff')
+              .borderRadius(8)
+            }
           }
+          .width('100%')
+          .height('100%')
+          .alignContent(Alignment.TopStart)
+          .clip(true)
+          .onAreaChange((o: Area, a: Area) => {
+            this.canvasOX = typeof a.globalPosition.x === 'number' ? a.globalPosition.x : 0;
+            this.canvasOY = typeof a.globalPosition.y === 'number' ? a.globalPosition.y : 0;
+            this.syncSelRect();
+          })
         }
         .alignContent(Alignment.TopStart)
         .layoutWeight(1)
         .height('100%')
         .padding(8)
-        .onAreaChange((o: Area, a: Area) => {
-          this.canvasOX = typeof a.globalPosition.x === 'number' ? a.globalPosition.x : 0;
-          this.canvasOY = typeof a.globalPosition.y === 'number' ? a.globalPosition.y : 0;
-        })
+        // 手势常驻、按模式切 mask：普通模式 Normal（Scroll/List 滚动优先，画布零干扰）；
+        // 移动模式 IgnoreInternal（父手势优先，选中组件在列表/滚动容器里也能拖动，
+        // 否则子组件抢手势表现为「拖不动」）。mask 是普通修饰符参数，模式切换原地生效，不重建画布。
         .gesture(
           PanGesture()
             .onActionStart(() => {
               this.panLastX = 0;
               this.panLastY = 0;
-              if (this.moveMode && this.selPath !== '') this.snapshot(); // 拖拽全程一个快照
+              if (this.moveMode && !this.showCode && this.selPath !== '') {
+                this.snapshot(); // 拖拽全程一个快照
+                const n = this.selNode();
+                if (n !== null) {
+                  const base = readOffset(n);
+                  this.dragBaseX = base.x;
+                  this.dragBaseY = base.y;
+                  this.dragAccX = 0;
+                  this.dragAccY = 0;
+                  this.dragging = true;
+                }
+              }
             })
             .onActionUpdate((e: GestureEvent) => {
-              if (!this.moveMode || this.selPath === '' || this.showCode) return;
+              if (!this.dragging) return;
               const dx = e.offsetX - this.panLastX;
               const dy = e.offsetY - this.panLastY;
               this.panLastX = e.offsetX;
               this.panLastY = e.offsetY;
               const n = this.selNode();
-              if (n !== null) {
-                moveBy(n, dx, dy);
-                this.refreshTree();
+              if (n === null) return;
+              moveBy(n, dx, dy); // IR 同步累积（序列化/撤销以 IR 为准）
+              this.dragAccX += dx;
+              this.dragAccY += dy;
+              // 直写活节点 offset + 盒子跟手：拖拽期间不重建整棵树
+              this.previewCtl.applyOffset(this.selGeoKey, this.dragBaseX + this.dragAccX, this.dragBaseY + this.dragAccY);
+              if (this.showSel) {
+                this.selX += dx;
+                this.selY += dy;
               }
             })
+            .onActionEnd(() => this.endDrag())
+            .onActionCancel(() => this.endDrag()),
+          this.moveMode && !this.showCode ? GestureMask.IgnoreInternal : GestureMask.Normal
         )
 
         // 右栏：大纲树 + 属性面板
@@ -673,14 +770,14 @@ struct Index {
   }
 
   @Builder
-  TopButton(label: string, active: boolean, onTap: () => void) {
+  TopButton(label: string, onTap: () => void) {
     Button(label)
       .fontSize(11)
       .height(28)
       .padding({ left: 8, right: 8 })
       .margin({ left: 4 })
-      .backgroundColor(active ? '#0A59F7' : '#e5e5ea')
-      .fontColor(active ? '#ffffff' : '#333333')
+      .backgroundColor('#e5e5ea')
+      .fontColor('#333333')
       .onClick(onTap)
   }
 

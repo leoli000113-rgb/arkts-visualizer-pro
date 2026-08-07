@@ -118,6 +118,19 @@ export function moveBy(node: IRNode, dx: number, dy: number): boolean {
   return true
 }
 
+/** 读取 offset 修饰符的当前数值（拖拽基线用）；无修饰符或非数值分量按 0 计 */
+export function readOffset(node: IRNode): { x: number, y: number } {
+  const m = findModifier(node, 'offset')
+  const a = m !== null ? m.args[0] : undefined
+  if (a === undefined || a.t !== 'obj') return { x: 0, y: 0 }
+  const x = a.v['x']
+  const y = a.v['y']
+  return {
+    x: x !== undefined && x.t === 'num' ? x.v : 0,
+    y: y !== undefined && y.t === 'num' ? y.v : 0,
+  }
+}
+
 /** 删除路径节点；根不可删。返回是否删除成功 */
 export function deleteAtPath(root: IRNode, path: Path): boolean {
   const pi = parentOf(root, path)

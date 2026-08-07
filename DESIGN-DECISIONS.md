@@ -518,3 +518,16 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - **工具链**：CLI 全闭环（DevEco 自带 node/jbr/hvigor；打包需 JBR 在 PATH；hdc 需反斜杠路径 + `MSYS_NO_PATHCONV=1`）。签名坑：DevEco 自动签名只写 `signingConfigs` 数组，products 缺 `"signingConfig": "default"` 引用时打出的仍是未签名包（9568320 no signature file）。验证手段：`hdc install` + `aa start` + `snapshot_display` 截图 + `uitest uiInput click` 模拟点击。
 - **功能现状**（全部真机截图验证）：原生渲染画布、点选+高亮框、大纲树（折叠/删除/复制）、属性面板（文本/宽高/字号/颜色/边距/透明度）、组件库点击添加、移动模式拖拽（写 offset）、代码视图+复制、模板画廊载入为新页面、多页面标签、导入 .ets/导出 .ets、撤销/重做（序列化快照，拖拽全程一份）。
 - 测试：Web 侧 331 全绿（含 native 移植等价 123）；native 端 hvigor 构建零告警目标达成，真机逐项手测通过。
+
+
+## 31. 原生版选中框对齐与手势竞争——FrameNode 几何 API 的正确用法（2026-08-07）
+
+针对「组件蓝框并不严格跟着组件本身走」的排查结论（全部 d.ts 证实 + 真机像素级截图验证），这几条对任何用 FrameNode 做覆盖层标注的代码都适用：
+
+- **单位混用**：`FrameNode.getMeasuredSize()` 返回 **px**，`getPositionToWindow()` 返回 **vp**（d.ts 原话 "with unit PX" vs "in vp"）。混用直接差出 density 倍（本机 2.75x），尺寸一律 `uiContext.px2vp()` 再进 vp 坐标系。
+- **布局位置 ≠ 绘制位置**：`getPositionToWindow()` 是布局结果，**不含 `.offset()`/`.translate()`**（这俩是绘制期位移）；要跟随真实可见位置必须用 `getPositionToWindowWithTransform()`（API 12+，vp）。这就是「拖完组件蓝框留在原地」的根因。
+- **overlay 定位基准**：`onAreaChange` 的 `globalPosition` 与 `.position()` 在父容器带 padding 时一个相对边框盒一个相对内容盒（实测差一个 padding）；overlay 层与几何查询锚点外套**零 padding 容器**后两者严格重合，不要再手工补 padding 偏移。
+- **跟随策略**：一次性查询不可靠（布局未完成/滚动/窗口变化），用 100~200ms 轮询 + 「值不变不写 @State」最省心；拖拽期间由手势直接驱动（绕过查询），结束后再归位。ForEach 多实例共用模板的注册键会互相覆盖——键里加实例后缀区分几何定位，IR 操作仍用归一化模板路径。
+- **手势竞争**：父容器 Pan 默认优先级抢不过 Scroll/List 内部滚动（表现为「移动模式在列表里拖不动」）。本 SDK 的正确姿势是 `.gesture(pan, mask)` 第二参切 `GestureMask.Normal/IgnoreInternal`（普通修饰符参数、原地生效），而不是 `.priority()`（此 SDK 的 PanGestureInterface 上没有）。
+- **@Builder 按值参数不刷新**：顶栏切换按钮的 label/高亮「冻结」——ArkUI 文档级行为，按值传参只创建时赋值一次。切换类按钮要么内联 build()，要么 builder 无参直读 `this.*`。
+- **编辑器渲染兜底**：动态结构可能非法（Button 同时带 label 和子组件 = `initialize(label)` + `appendChild` 抛异常）。教训是**单节点失败绝不允许白掉整个画布**：逐子节点 try/catch 放错误占位块 + 根级 try/catch 兜底；Button 有子组件时必须不带 label 初始化（ArkUI 语义即子组件优先）。

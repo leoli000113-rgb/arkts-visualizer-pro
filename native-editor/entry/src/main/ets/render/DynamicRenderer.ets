@@ -608,16 +608,19 @@ function applyGridItemAttr(attr: GridItemAttribute, m: Modifier): boolean {
   }
 }
 
-// ---------- 编辑钩子（点选/几何注册） ----------
+// ---------- 编辑钩子（点选/几何注册/位移直写） ----------
 
 export interface RenderHooks {
   onTap: (path: string) => void
   registry: Map<string, FrameNode>
+  /** 每路径一个 offset 直写闭包：移动拖拽时改活节点，绕过整树重建 */
+  offsetAppliers: Map<string, (x: number, y: number) => void>
 }
 
 function tap<T>(attr: CommonMethod<T>, hooks: RenderHooks | null, path: string): void {
   if (hooks === null) return
   attr.onClick(() => hooks.onTap(path))
+  hooks.offsetAppliers.set(path, (x: number, y: number) => { attr.offset({ x: x, y: y }) })
 }
 
 function childPath(p: string, i: number): string {
@@ -639,10 +642,30 @@ function placeholder(ctx: UIContext, label: string, color: ResourceColor, hooks:
   return n
 }
 
+/** 渲染失败兜底块（红底）：单个子树失败绝不让整个画布白屏 */
+function errorBlock(ctx: UIContext, label: string, hooks: RenderHooks | null, path: string): typeNode.Text {
+  const n = placeholder(ctx, label, '#ffeded', hooks, path)
+  n.attribute.fontColor('#cc0000')
+  return n
+}
+
+/** 供 EditorCanvas 使用的根级兜底：buildFrame 抛错时返回错误块而非 null */
+export function errorFrame(ctx: UIContext, err: Object): FrameNode {
+  const msg = err instanceof Error ? err.message : String(err)
+  return errorBlock(ctx, `渲染失败: ${msg.length > 60 ? msg.slice(0, 60) + '…' : msg}`, null, '')
+}
+
 // ---------- 子节点挂载（If/ForEach/BuilderCall 在兄弟序列中求值展开） ----------
 
 function mountChild(ctx: UIContext, parent: FrameNode, c: IRNode, cp: string, wrap: string, hooks: RenderHooks | null, scope: Map<string, V> | null): void {
-  const child = buildFrame(ctx, c, hooks, cp, scope)
+  let child: FrameNode | null = null
+  try {
+    child = buildFrame(ctx, c, hooks, cp, scope)
+  } catch (e) {
+    // 单个子树渲染失败（如 Button 里塞 Scroll 这类非法结构）：就地放错误块，保住其余树
+    const msg = e instanceof Error ? e.message : String(e)
+    child = errorBlock(ctx, `${c.type}: ${msg.length > 30 ? msg.slice(0, 30) + '…' : msg}`, hooks, cp)
+  }
   if (child === null) return
   if (wrap === 'ListItem' && c.type !== 'ListItem') {
     const item = typeNode.createNode(ctx, 'ListItem')
@@ -696,7 +719,9 @@ function appendChildren(ctx: UIContext, parent: FrameNode, children: IRNode[], w
           const s2 = new Map<string, V>(scope !== null ? scope : new Map<string, V>())
           s2.set(pn[0], items[k])
           if (pn[1] !== null) s2.set(pn[1], k)
-          appendChildren(ctx, parent, c.children, wrap, hooks, cp, s2)
+          // 实例后缀 #k 保证每次迭代的注册键唯一（点选/选中框定位到被点的那个实例）；
+          // keyToPath 的 parseInt 会剥掉 '#…' 后缀，IR 操作仍命中共享的模板子树
+          appendChildren(ctx, parent, c.children, wrap, hooks, k === 0 ? cp : `${cp}#${k}`, s2)
         }
       } else {
         mountChild(ctx, parent, c, cp, wrap, hooks, scope) // 数据源不可求值 → 占位块
@@ -776,7 +801,8 @@ function buildNode(ctx: UIContext, ir: IRNode, hooks: RenderHooks | null, path: 
       const a1 = ir.ctorArgs[1]
       const bt = a1 !== undefined && a1.t === 'obj' ? BUTTON_TYPES.get(enumOf(objVal(a1, 'type')) || '') : undefined
       if (bt !== undefined) opt.type = bt
-      if (label !== null) n.initialize(label, opt)
+      // ArkUI Button 是「文本」或「子组件」二选一：有子组件时带 label 初始化再 appendChild 会炸
+      if (label !== null && ir.children.length === 0) n.initialize(label, opt)
       else n.initialize(opt)
       for (const m of ir.modifiers) {
         if (applyCommon(n.attribute, m)) continue

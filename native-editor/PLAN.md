@@ -26,8 +26,19 @@
 | 4 | 编辑交互：`core/mutate.ts` 编辑操作 + 画布点选/选中框 + 大纲树（`panels/OutlineTree.ets`）+ 属性面板（`panels/PropertyPanel.ets`）+ 移动模式拖拽 | ✅ 编译通过 |
 | 5 | 代码往返 + 整项目导入导出 + If/ForEach 求值 | ✅ 完成（真机逐项验证） |
 | 6 | 模板库移植（28 套，画廊载入为新页面）+ 撤销/重做（序列化快照）+ 文档 | ✅ 完成（真机逐项验证） |
+| 7 | 选中框对齐三连修 + 移动模式手势竞争 + 渲染兜底 + 切换按钮冻结 | ✅ 完成（真机逐项验证） |
 
 **批次 6 补充**：模板画廊覆盖层 + 模板防漂移等价测试；撤销/重做快照栈（50 上限，拖拽 onActionStart 一份基线）；修复大纲树切页后行错乱（ForEach key 加数据版本号——List 按 path 复用旧行导致两棵树的行交错显示）。全部真机截图验证：模板画廊、标准首页加载、大纲树结构与模板源码一致、删除→撤销恢复。
+
+**批次 7 补充**（「蓝框不跟组件」排查出的四类问题，全部真机截图验证）：
+
+- **选中框几何三连错**（d.ts 明确 + 像素实测证实）：①`getMeasuredSize()` 返回 **px** 而 `getPositionToWindow()` 返回 **vp**——高密度设备（本机 density≈2.75）框比组件大 density 倍，尺寸必须 `px2vp`；②`onAreaChange` 的 `globalPosition` 与 `.position()` 在父容器带 padding 时基准不一致（差一个 padding）——画布外套零 padding 内层 Stack 后两者重合；③`getPositionToWindow` 是布局位置、**不含 offset/translate**（绘制期位移）——必须换 `getPositionToWindowWithTransform()`，否则带 offset 的组件框停在原位。
+- **选中框跟随**：120ms 轮询 `queryRect`（值不变不写 @State，空闲零开销），覆盖滚动/布局/窗口变化；`onAreaChange` 即触发一次；ForEach 每迭代注册键加 `#k` 实例后缀（`keyToPath` 的 parseInt 天然剥掉，IR 操作仍命中模板子树）——点第 2 个实例框不再跳到最后一个。
+- **移动拖拽重写**：拖拽中不再每帧重建整树——渲染器 `tap()` 给每路径注册 offset 直写闭包（`offsetAppliers`），`onActionUpdate` 里 `moveBy`(IR 累积) + 直写活节点 + 盒子跟手，`onActionEnd` 才 `refreshTree()` 一次。撤销仍全程一份快照。
+- **手势竞争**：外层 Stack 的 Pan 默认优先级抢不过 Scroll/List 内部滚动（移动模式下列表里「拖不动」）——手势常驻但 mask 按模式切换：普通 `GestureMask.Normal`（滚动零干扰），移动模式 `GestureMask.IgnoreInternal`（父手势优先）。mask 是普通修饰符参数，模式切换原地生效不重建画布。注意此 SDK 无 `PanGesture().priority()` 也无 `GesturePriority.High`（只有枚举 NORMAL/PRIORITY，且优先级不走 `.gesture()` 第二参，走 `.priorityGesture()`/mask）。
+- **切换按钮冻结**：`@Builder` 按值参数不随状态刷新——顶栏「移动/代码/模板」按钮 label 与高亮从不更新（点击其实在生效），切换类按钮必须内联进 build() 或让 builder 无参直读 `this.*`。
+- **白屏根因与兜底**：Button 同时带 label 构造参数和子组件（`insertAuto` 允许插入 Button，`CONTAINER_TYPES` 含 Button）时 `initialize(label)` + `appendChild` 抛异常 → `makeNode` 整体挂掉 → 画布全白。修复三连：Button 有子组件时不带 label 初始化（ArkUI 语义即子组件优先）；`mountChild` 逐子节点 try/catch，失败就地放红底错误块；`makeNode` 根级 try/catch 落 `errorFrame`。画布从此不会整白。
+- 组件库 Scroll/List/Grid/Swiper 默认补 `width('100%')`（原只有 height，空容器塌成细条难辨认）。
 
 ## 验证现状
 
