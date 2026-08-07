@@ -1,47 +1,48 @@
-import { tokenize, Tok } from './tokenizer'
-import { ArgVal, IRFile, IRMember, IRNode, IRState } from '../ir/types'
-
 /**
- * 自研递归下降解析器：.ets → IR（外科手术式编辑）
+ * 自研递归下降解析器：.ets → IR —— 从 Web 版 app/src/parser/parser.ts 移植
+ *
+ * ArkTS 严格模式适配点（逻辑与 Web 版逐行等价）：
+ * - 构造参数属性改为显式字段；下标越界访问改为 tokAt() 返回 null
+ * - 去除逗号运算符 / 非空断言 ! / 类型谓词 filter / as unknown as 双断言
+ * - catch 变量不显式类型，用 instanceof Error 取 message
  *
  * 核心原则：**build() 结构化可编辑，其余一切原文保留**。
- * - struct 之前（import/interface/注释）→ preamble 原样保留
- * - struct 之后（其它 struct/自定义组件）→ postamble 原样保留
- * - 成员：@State 等装饰器状态 → 结构化；方法/@Builder/字段 → raw 原文（含注释与格式）
- * - build() 内：
- *   - `if (cond) { ... }`        → { type: 'If',   ctorArgs: [raw(cond 含括号)], children: if 体 }
- *   - `else { ... }` / else if   → { type: 'Else', children }（紧跟 If 的兄弟节点）
- *   - `ForEach(items, (it) => { ... }, keyGen?)`
- *                              → { type: 'ForEach', ctorArgs: [数据源, raw(参数), keyGen?], children: 模板体 }
- *   - `this.xxx(...)` 等表达式语句 → { type: 'Expr', ctorArgs: [raw(原文)] }
- *   - 注释行                    → { type: 'Comment', ctorArgs: [raw(原文)] }
- *   - 复杂表达式（拼接/三元/箭头/数组/$r()/模板串）→ { t: 'raw' } 原样保留
- *   - 无法识别的构造            → { type: 'Unknown', unsupported: true, ctorArgs: [raw] }
  */
 
+import { tokenize, Tok } from './tokenizer'
+import { ArgVal, IRFile, IRMember, IRNode, IRState, Modifier } from './ir'
+
 // 表达式继续符：primary 之后遇到这些符号，说明是复合表达式，整体按 raw 保留
-// （[ 为下标访问 arr[i].x；= 覆盖赋值/==/===；! 覆盖非空断言 expr!.x 与 != / !==）
 const TAIL_OPS = new Set(['+', '-', '*', '/', '%', '?', ':', '&&', '||', '??', '==', '===', '!=', '!==', '<', '>', '<=', '>=', '=', '[', '!'])
 /** 结构性节点（不参与根组件判定） */
 const NON_STRUCTURAL = new Set(['Comment', 'Expr'])
 
 export class Parser {
   private toks: Tok[]
-  private p = 0
-  constructor(private src: string) { this.toks = tokenize(src) }
+  private p: number = 0
+  private src: string
 
-  private peek() { return this.toks[this.p] }
-  private next() { return this.toks[this.p++] }
-  private prevEnd() { return this.toks[this.p - 1].end }
-  private at(text: string) { const t = this.peek(); return t.kind === 'punct' && t.text === text }
-  private atId(text: string) { const t = this.peek(); return t.kind === 'id' && t.text === text }
-  private eat(text: string) {
+  constructor(src: string) {
+    this.src = src
+    this.toks = tokenize(src)
+  }
+
+  private tokAt(i: number): Tok | null {
+    return i >= 0 && i < this.toks.length ? this.toks[i] : null
+  }
+
+  private peek(): Tok { return this.toks[this.p] }
+  private next(): Tok { return this.toks[this.p++] }
+  private prevEnd(): number { return this.toks[this.p - 1].end }
+  private at(text: string): boolean { const t = this.peek(); return t.kind === 'punct' && t.text === text }
+  private atId(text: string): boolean { const t = this.peek(); return t.kind === 'id' && t.text === text }
+  private eat(text: string): void {
     if (!this.at(text)) throw new Error(`期望 '${text}'，但在位置 ${this.peek().pos} 遇到 '${this.peek().text}'`)
     this.p++
   }
   private expectId(text?: string): string {
     const t = this.peek()
-    if (t.kind !== 'id' || (text && t.text !== text))
+    if (t.kind !== 'id' || (text !== undefined && t.text !== text))
       throw new Error(`期望标识符 ${text || ''}，但在位置 ${t.pos} 遇到 '${t.text}'`)
     this.p++; return t.text
   }
@@ -53,7 +54,7 @@ export class Parser {
     return t.text
   }
 
-  /** 用 token 间的原始空白重建文本：源里怎么写就怎么输出（Array<string> 紧、&& 紧、a < b 松） */
+  /** 用 token 间的原始空白重建文本：源里怎么写就怎么输出 */
   private rawSlice(a: number, b: number): string {
     if (a >= b) return ''
     let out = this.rawOf(this.toks[a])
@@ -143,7 +144,8 @@ export class Parser {
     const members: IRMember[] = []
     let buildItems: IRNode[] = []
     while (!this.at('}') && this.peek().kind !== 'eof') {
-      if (this.atId('build') && this.toks[this.p + 1]?.text === '(') {
+      const t1 = this.tokAt(this.p + 1)
+      if (this.atId('build') && t1 !== null && t1.text === '(') {
         this.next()
         this.eat('('); this.eat(')')
         this.eat('{')
@@ -155,15 +157,16 @@ export class Parser {
       const memberStart = this.p
       const startPos = this.peek().pos
       // @Builder 方法：签名原文保留 + 方法体 UI 结构化（失败则回退 raw 原文块）
-      if (this.at('@') && this.toks[this.p + 1]?.text === 'Builder') {
+      const t2 = this.tokAt(this.p + 1)
+      if (this.at('@') && t2 !== null && t2.text === 'Builder') {
         const b = this.tryParseBuilder(startPos)
-        if (b) { members.push(b); continue }
+        if (b !== null) { members.push(b); continue }
         this.p = memberStart
       }
       try {
         const st = this.tryParseState()
-        if (st) { members.push({ kind: 'state', state: st }); continue }
-      } catch { /* 非状态声明 → 走原文保留 */ }
+        if (st !== null) { members.push({ kind: 'state', state: st }); continue }
+      } catch (e) { /* 非状态声明 → 走原文保留 */ }
       this.p = memberStart
       members.push({ kind: 'raw', text: this.captureMemberRaw(startPos) })
     }
@@ -178,34 +181,46 @@ export class Parser {
     const rootExtrasPost = buildItems.slice(ri + 1)
     // 调用点镜像：build 内的 this.<builder>() → BuilderCall 节点（children 与定义共享引用）
     const builderMap = new Map<string, IRNode[]>()
-    for (const m of members) if (m.kind === 'builder') builderMap.set(m.name, m.children)
-    const linkMirrors = (nodes: IRNode[]) => {
+    for (const m of members) {
+      if (m.kind === 'builder') builderMap.set(m.name, m.children)
+    }
+    const linkMirrors = (nodes: IRNode[]): void => {
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i]
         if (n.type === 'Expr') {
           const raw = n.ctorArgs[0]
-          const m = raw && raw.t === 'raw' ? raw.v.match(/^\s*this\.(\w+)\s*\(\s*\)\s*;?\s*$/) : null
+          const m = raw !== undefined && raw.t === 'raw' ? raw.v.match(/^\s*this\.(\w+)\s*\(\s*\)\s*;?\s*$/) : null
           // 每个 builder 只镜像第一个调用点（多调用点编辑会产生歧义，其余保留 Expr）
-          if (m && builderMap.has(m[1])) {
-            nodes[i] = {
-              type: 'BuilderCall',
-              ctorArgs: [n.ctorArgs[0], { t: 'raw', v: m[1] }],
-              children: builderMap.get(m[1])!,
-              modifiers: [],
-              pos: n.pos,
-              end: n.end,
+          if (m !== null && builderMap.has(m[1])) {
+            const children = builderMap.get(m[1])
+            if (children !== undefined) {
+              nodes[i] = {
+                type: 'BuilderCall',
+                ctorArgs: [n.ctorArgs[0], { t: 'raw', v: m[1] }],
+                children: children,
+                modifiers: [],
+                pos: n.pos,
+                end: n.end,
+              }
+              builderMap.delete(m[1])
+              continue
             }
-            builderMap.delete(m[1])
-            continue
           }
         }
         linkMirrors(n.children)
       }
     }
-    linkMirrors([root, ...rootExtrasPre, ...rootExtrasPost])
+    const mirrorRoots: IRNode[] = [root]
+    for (const e of rootExtrasPre) mirrorRoots.push(e)
+    for (const e of rootExtrasPost) mirrorRoots.push(e)
+    linkMirrors(mirrorRoots)
+    const states: IRState[] = []
+    for (const m of members) {
+      if (m.kind === 'state') states.push(m.state)
+    }
     return {
       structName, preamble, postamble, structDecorators, members,
-      states: members.filter((m): m is { kind: 'state'; state: IRState } => m.kind === 'state').map(m => m.state),
+      states,
       root,
       rootExtrasPre,
       rootExtrasPost,
@@ -227,7 +242,7 @@ export class Parser {
       const structural = children.filter(c => !NON_STRUCTURAL.has(c.type))
       if (structural.length !== 1) { this.p = start; return null }
       return { kind: 'builder', name, signature, children }
-    } catch {
+    } catch (e) {
       this.p = start
       return null
     }
@@ -261,8 +276,10 @@ export class Parser {
     // 装饰器
     while (this.at('@')) { this.next(); this.expectId(); if (this.at('(')) this.captureBalanced('(', ')') }
     // 修饰符（private/public/static/async/readonly/protected）
-    while (this.peek().kind === 'id' && this.toks[this.p + 1]?.kind === 'id') this.next()
-    if (this.peek().kind === 'id' && this.toks[this.p + 1]?.text === '(') {
+    let nm = this.tokAt(this.p + 1)
+    while (this.peek().kind === 'id' && nm !== null && nm.kind === 'id') { this.next(); nm = this.tokAt(this.p + 1) }
+    const t2 = this.tokAt(this.p + 1)
+    if (this.peek().kind === 'id' && t2 !== null && t2.text === '(') {
       // 方法：名(参数) 返回类型? { 函数体 }
       this.next()
       this.captureBalanced('(', ')')
@@ -287,7 +304,7 @@ export class Parser {
   }
 
   /** 跳过方法返回类型标注（含泛型/联合/数组/动态 import 类型），到 { 前为止 */
-  private skipTypeTokens() {
+  private skipTypeTokens(): void {
     let depth = 0
     while (this.peek().kind !== 'eof') {
       const t = this.peek()
@@ -312,9 +329,11 @@ export class Parser {
         continue
       }
       try {
-        out.push(...this.parseChildNodes())
-      } catch (e: any) {
-        out.push(this.recoverUnknown(String(e?.message || e)))
+        const nodes = this.parseChildNodes()
+        for (const n of nodes) out.push(n)
+      } catch (e) {
+        const m0 = e instanceof Error ? e.message : ''
+        out.push(this.recoverUnknown(m0 || String(e)))
       }
     }
     return out
@@ -323,7 +342,8 @@ export class Parser {
   private parseChildNodes(): IRNode[] {
     if (this.atId('if')) return this.parseIf()
     // this.xxx(...) 表达式语句（如 this.buildHeader()）→ Expr 原文节点
-    if (this.atId('this') && this.toks[this.p + 1]?.text === '.') {
+    const t1 = this.tokAt(this.p + 1)
+    if (this.atId('this') && t1 !== null && t1.text === '.') {
       const startPos = this.peek().pos
       const raw = this.captureStatement()
       return [{ type: 'Expr', ctorArgs: [{ t: 'raw', v: raw }], children: [], modifiers: [], pos: startPos, end: this.prevEnd() }]
@@ -397,7 +417,7 @@ export class Parser {
     return { type: 'ForEach', ctorArgs, children, modifiers: [], pos: startPos, end: this.prevEnd() }
   }
 
-  private parseModifierChain(node: IRNode) {
+  private parseModifierChain(node: IRNode): void {
     while (this.at('.')) {
       this.eat('.')
       const mname = this.expectId()
@@ -496,7 +516,8 @@ export class Parser {
     if (!this.at('}')) {
       while (true) {
         const keyTok = this.peek()
-        const key = keyTok.kind === 'str' ? (this.next(), keyTok.text) : this.expectId()
+        let key: string
+        if (keyTok.kind === 'str') { this.next(); key = keyTok.text } else { key = this.expectId() }
         this.eat(':')
         v[key] = this.parseArgVal()
         if (this.at(',')) { this.next(); if (this.at('}')) break; continue }
@@ -509,7 +530,7 @@ export class Parser {
 
   // ---------- 错误恢复 ----------
 
-  /** 子节点解析失败：吞掉无法识别的原文，生成占位节点，保证不崩不丢（ADR-008） */
+  /** 子节点解析失败：吞掉无法识别的原文，生成占位节点，保证不崩不丢 */
   private recoverUnknown(errMsg: string): IRNode {
     const start = this.p
     const startPos = this.peek().pos
@@ -538,8 +559,8 @@ export class Parser {
       }
       // 疑似新组件开始（id 后接 ( 或 {）：交给上级重新解析
       if (t.kind === 'id' && depth === 0 && this.p > start) {
-        const nxt = this.toks[this.p + 1]
-        if (nxt && nxt.kind === 'punct' && (nxt.text === '(' || nxt.text === '{')) break
+        const nxt = this.tokAt(this.p + 1)
+        if (nxt !== null && nxt.kind === 'punct' && (nxt.text === '(' || nxt.text === '{')) break
       }
       this.next()
     }
@@ -551,6 +572,16 @@ export class Parser {
       pos: startPos, end: this.prevEnd(),
     }
   }
+
+  /** 供 parseModifierChainText 使用：仅解析修饰符链，且整段必须被消费（注释可残留） */
+  parseModifierChainOnly(): Modifier[] | null {
+    const node: IRNode = { type: '_styles_', ctorArgs: [], children: [], modifiers: [] }
+    this.parseModifierChain(node)
+    for (let i = this.p; i < this.toks.length; i++) {
+      if (this.toks[i].kind !== 'comment' && this.toks[i].kind !== 'eof') return null
+    }
+    return node.modifiers
+  }
 }
 
 export function parse(src: string): IRFile {
@@ -561,17 +592,10 @@ export function parse(src: string): IRFile {
  * 解析修饰符链文本（@Styles/@Extend 方法体）：'.width(100).height(50)' → Modifier[]。
  * 整段必须被消费（注释可残留），否则返回 null。
  */
-export function parseModifierChainText(text: string): IRNode['modifiers'] | null {
+export function parseModifierChainText(text: string): Modifier[] | null {
   try {
-    const p = new Parser(text)
-    const node: IRNode = { type: '_styles_', ctorArgs: [], children: [], modifiers: [] }
-    ;(p as unknown as { parseModifierChain(n: IRNode): void }).parseModifierChain(node)
-    const rest = (p as unknown as { toks: Tok[]; p: number })
-    for (let i = rest.p; i < rest.toks.length; i++) {
-      if (rest.toks[i].kind !== 'comment' && rest.toks[i].kind !== 'eof') return null
-    }
-    return node.modifiers
-  } catch {
+    return new Parser(text).parseModifierChainOnly()
+  } catch (e) {
     return null
   }
 }

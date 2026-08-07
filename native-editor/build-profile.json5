@@ -1,0 +1,57 @@
+{
+  "app": {
+    // 真机安装前：在 DevEco Studio 里配置自动签名（File → Project Structure → Signing Configs）
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\l30080326\\.ohos\\config\\default_native-editor_7t74DnoEnvLiqE95Nfg4-VKCylMGoHtUVoBxwG0Gf3w=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B9763AC67A3F9D87C8D09CF201C64F139A824D5B198CC4B12B750C00966B77D488E4AD3800CEDBA",
+          "profile": "C:\\Users\\l30080326\\.ohos\\config\\default_native-editor_7t74DnoEnvLiqE95Nfg4-VKCylMGoHtUVoBxwG0Gf3w=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\l30080326\\.ohos\\config\\default_native-editor_7t74DnoEnvLiqE95Nfg4-VKCylMGoHtUVoBxwG0Gf3w=.p12",
+          "storePassword": "0000001BEF2EB3E3FBEA6FD2F9EF5F06B179CD821959BDEE4AB49BAC1BEFB4A94821F04CC16E7551DE8723"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

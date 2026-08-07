@@ -157,6 +157,10 @@ renderer.test.tsx   SSR 冒烟：sample.ets 不回归、sample_full 全树关键
 - 媒体以 dataURL 内联进 localStorage（单文件 ≤12MB）；配额满时落盘静默失败（内存态仍在，刷新后重新导入即可）。`NavDestination`/`Navigation` 路由模式未支持（仅 router 接口）。
 - 预览是语义级还原（vp 布局 0 误差），物理像素级以真机为准。
 
+## 7.5 原生 ArkTS 版（native-editor/）
+
+Web 版之外，仓库还包含 **ArkTS 原生重写版**编辑器（`native-editor/`，HAP 直装手机）：画布预览用 `typeNode` 动态创建**真·ArkUI 组件**（而非 HTML/CSS 模拟），布局几何与真机天然 1:1——这是「画布 vs 手机一致性」的终极答案。与 Web 版共享同一份 IR/解析器/序列化器（`entry/src/main/ets/core/` 逐行移植），等价性由 `app/src/native/` 的 vitest 强制（IR 深相等 + 序列化逐字节一致）。详见 `native-editor/PLAN.md` 与 DESIGN-DECISIONS 第 30 条。
+
 ## 8. 目录速查
 
 ```

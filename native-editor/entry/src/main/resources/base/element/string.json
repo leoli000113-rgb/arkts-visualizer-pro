@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "ArkTS 原生可视化编辑器"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "可视化编辑器主入口"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "ArkTS 编辑器"
+    }
+  ]
+}

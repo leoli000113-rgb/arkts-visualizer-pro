@@ -504,3 +504,17 @@ App.css / index.css / renderer.css 整体浅化：页面 #f0f2f5、面板白底�
 - **模板居中审计（Playwright 数值化）**：28 个模板全部套用，对所有 `justify-content ≠ flex-start` 的容器比较「子内容块实际起始位置」与「按该对齐值应有的起始位置」（容差 6px）——**全部一致，无「画布堆顶、真机居中」案例**；此前同类问题（TabContent 占满）修复仍有效。结论：当前模板渲染与 ArkUI 对齐语义自洽，用户感知的残留居中偏差主要由设备 vp 不符引起（固定 vp 边距/position 在不同 vp 宽上占比不同）。
 - **缩略图限高**：卡片固定 180px 高，缩放取宽/高双向最小值（min-fit），按缩放后视觉尺寸居中——长屏设备（1000+ vp）缩略图不再超长，且整屏等比完整可见（与画布比例逐点一致的特性不变，E2E 实测宽比/顶距比 Δ0.000）。
 - 测试 208/208 绿（+4：devices.test.ts），typecheck/lint/build 全绿；E2E：vp 直填 430×930 保存后顶栏即时生效、切 360 基准设备画布视口同步。
+
+
+## 30. 原生 ArkTS 版编辑器（native-editor/）—— 渲染保真的终极答案（2026-08-06）
+
+针对「Web 版用 HTML/CSS 模拟 ArkUI，格式/位置/大小与真机始终有出入」这一根本性反馈：
+
+- **决策**：新增 `native-editor/` 子工程（Stage 模型，SDK 26，包名 `com.leoli.arktseditor`），编辑器整体用 ArkTS 重写；画布预览**不再模拟**，改用 `typeNode.createNode`（API 12+）动态创建**真·ArkUI 组件**挂进 `NodeContainer`——布局引擎就是真机那一个，几何/字体/对齐/滚动行为天然 1:1。Web 版保留为快速预览与逻辑参照。
+- **与 Web 版共享资产**：IR 数据模型、递归下降解析器、代码生成器从 `app/src` 逐行移植（`entry/src/main/ets/core/`，纯逻辑 .ts 文件，无 ArkUI 依赖）；`app/src/native/` 下的 vitest 做「移植版 ≡ Web 版」等价断言（IR 深相等 + 序列化逐字节一致，33 语料 × 3 断言 + 求值器/编辑操作/模板库完整性，共 120 条），任何一端漂移立刻红。模板库 28 套整体复制，等价测试防漂移。
+- **表达式求值器**（`core/exprEval.ts`）：If 条件 / ForEach 数据源 / 模板字符串 / `this.xxx` 文本在「@State 初值 + 条目变量」作用域内按 JS 语义子集求值——画布上的 ForEach 不再是占位块而是真实展开；求值失败回退占位块，永不崩。
+- **typeNode 实践要点**：①TypedFrameNode 的 `commonAttribute` 行为未定义，所有属性必须走 typed `attribute`（`TextAttribute` 等，其 extends `CommonMethod<T>`，通用修饰符可泛型复用）；②`initialize` 签名 = 组件构造类型（List 首参是 Scroller 而非 options；Grid 无 space 选项）；③Tabs/Navigation 不在支持列表，渲染为占位。
+- **ArkUI 状态管理坑（真机调试实锤）**：自定义组件 plain（无装饰器）参数**仅创建时赋值一次**，@Prop 深拷贝对象会让 mutate 改到副本——属性面板因此改为主页面内联 @Builder、不传递节点参数、全部读取走方法新鲜求值；@Builder 顶层不允许局部变量声明。List+ForEach 行 key 仅用 path 会在切页后复用错乱（两棵树同 path 行交错显示）——key 必须带数据版本号。
+- **工具链**：CLI 全闭环（DevEco 自带 node/jbr/hvigor；打包需 JBR 在 PATH；hdc 需反斜杠路径 + `MSYS_NO_PATHCONV=1`）。签名坑：DevEco 自动签名只写 `signingConfigs` 数组，products 缺 `"signingConfig": "default"` 引用时打出的仍是未签名包（9568320 no signature file）。验证手段：`hdc install` + `aa start` + `snapshot_display` 截图 + `uitest uiInput click` 模拟点击。
+- **功能现状**（全部真机截图验证）：原生渲染画布、点选+高亮框、大纲树（折叠/删除/复制）、属性面板（文本/宽高/字号/颜色/边距/透明度）、组件库点击添加、移动模式拖拽（写 offset）、代码视图+复制、模板画廊载入为新页面、多页面标签、导入 .ets/导出 .ets、撤销/重做（序列化快照，拖拽全程一份）。
+- 测试：Web 侧 331 全绿（含 native 移植等价 123）；native 端 hvigor 构建零告警目标达成，真机逐项手测通过。

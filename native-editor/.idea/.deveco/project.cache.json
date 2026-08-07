@@ -1,0 +1,17 @@
+{
+	"CommonInfo":{
+		"project.ide.version":"26.0.0.461",
+		"current.select.product":"default",
+		"current.select.buildMode":"",
+		"crossplatform.projectType":""
+	},
+	"BuildOptions":{
+		"SELECT_BUILD_PRODUCT":"default",
+		"BUNDLE_NAME":"com.leoli.arktseditor",
+		"BUILD_PATH":{
+			"OUTPUT_PATH":"C:\\Users\\l30080326\\Desktop\\arkts-visualizer-pro\\native-editor\\build\\outputs\\default"
+		},
+		"SELECT_BUILD_MODE":""
+	},
+	"CertConfig":{}
+}
