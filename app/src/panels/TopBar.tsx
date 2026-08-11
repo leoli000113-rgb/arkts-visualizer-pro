@@ -38,7 +38,7 @@ function readDataUrl(f: File): Promise<string> {
 const MEDIA_SIZE_CAP = 12 * 1024 * 1024 // 单文件 12MB 上限（dataURL 落盘 localStorage，防爆配额）
 
 /** 顶栏：导入（单文件/整项目/媒体）/重置/复制/导出/撤销重做/设备切换/折叠态/交互预览/辅助标记/诊断角标/帮助 */
-export function TopBar({ onOpenHelp }: { onOpenHelp: () => void }) {
+export function TopBar({ onOpenHelp, onOpenAi, onOpenDevice }: { onOpenHelp: () => void; onOpenAi: () => void; onOpenDevice: () => void }) {
   const {
     code, ir, error, deviceModel, fold,
     setDevice, setFold, resetToSample,
@@ -168,6 +168,8 @@ export function TopBar({ onOpenHelp }: { onOpenHelp: () => void }) {
       {!error && warnings.length > 0 && (
         <span className="warn" title={warnings.join('\n')}>⚠ {warnings.length} 处编译风险</span>
       )}
+      <button className="ai-btn-top" title="AI 对话生成界面（同步到画布）" onClick={onOpenAi}>✦ AI</button>
+      <button className="ai-btn-top" title="把真机/模拟器屏幕投到画布旁（hdc 流）" onClick={onOpenDevice}>📱 真机</button>
       <button className="help-btn" title="快捷键与手势说明" onClick={onOpenHelp}>?</button>
       {devEditorOpen && <DeviceEditor onClose={() => setDevEditorOpen(false)} />}
     </div>

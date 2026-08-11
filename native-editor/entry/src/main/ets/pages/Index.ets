@@ -2,6 +2,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { pasteboard, BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
+import http from '@ohos.net.http';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { parse } from '../core/parser';
@@ -67,6 +68,13 @@ interface PageItem {
   file: IRFile
 }
 
+/** ai-proxy /api/code/current 的响应（真机闭环轮询） */
+interface ProxyResp {
+  ok: boolean
+  ts: number
+  code: string
+}
+
 /**
  * 编辑器主页：左组件库（点击添加）｜中画布/代码视图｜右大纲树 + 属性面板
  * 顶栏：页面标签 + 导入/导出/代码/移动模式
@@ -111,6 +119,13 @@ struct Index {
   private dragAccY: number = 0;
   private selTimer: number = -1;
 
+  // —— 真机闭环：轮询 ai-proxy 拉取 Web 端生成的最新 .ets ——
+  // 模拟器→宿主用 10.0.2.2；真机（USB/WiFi）改宿主 LAN IP。
+  private proxyHost: string = '10.0.2.2';
+  private proxyPort: number = 5174;
+  private proxyTimer: number = -1;
+  private proxyLastTs: number = 0;
+
   private curFile(): IRFile {
     return this.pages[this.curPage].file;
   }
@@ -133,6 +148,8 @@ struct Index {
     this.previewCtl.onTapNode = (p: string) => this.onNodeTap(p);
     // 选中框跟随轮询：滚动/布局/窗口变化时自动重新对齐（值不变不写状态，空闲零开销）
     this.selTimer = setInterval(() => this.syncSelRect(), 120);
+    // 真机闭环：轮询 ai-proxy 拉取最新 .ets（Web 端生成后 POST 到 /api/code/current）
+    this.proxyTimer = setInterval(() => this.pollProxy(), 1500);
     this.refreshTree();
   }
 
@@ -140,6 +157,10 @@ struct Index {
     if (this.selTimer >= 0) {
       clearInterval(this.selTimer);
       this.selTimer = -1;
+    }
+    if (this.proxyTimer >= 0) {
+      clearInterval(this.proxyTimer);
+      this.proxyTimer = -1;
     }
   }
 
@@ -151,6 +172,56 @@ struct Index {
     this.code = serialize(f);
     this.ver++;
     setTimeout(() => this.syncSelRect(), 90);
+  }
+
+  // ---------- 真机闭环：轮询 ai-proxy 拉取 Web 生成的 .ets ----------
+
+  /** 拉取 /api/code/current，ts 变化即载入（替换当前页，保留撤销栈）。 */
+  private pollProxy(): void {
+    const url = `http://${this.proxyHost}:${this.proxyPort}/api/code/current`;
+    const req = http.createHttp();
+    req.request(url, {
+      method: http.RequestMethod.GET,
+      expectDataType: http.HttpDataType.STRING,
+      connectTimeout: 3000,
+      readTimeout: 3000,
+    }).then((res) => {
+      if (res.responseCode !== 200) return;
+      const body = typeof res.result === 'string' ? res.result : '';
+      if (body.length === 0) return;
+      try {
+        const obj = JSON.parse(body) as ProxyResp;
+        if (obj.ok && obj.ts > 0 && obj.ts !== this.proxyLastTs) {
+          this.proxyLastTs = obj.ts;
+          if (obj.code.length > 0) this.loadProxyCode(obj.code);
+        }
+      } catch (e) {
+        hilog.warn(0x0000, TAG, 'proxy parse failed: %{public}s', String(e));
+      }
+    }).catch((e: BusinessError) => {
+      // 代理离线/未启动：静默，下一轮再试
+      hilog.debug(0x0000, TAG, 'proxy poll err: %{public}s', JSON.stringify(e));
+    }).finally(() => {
+      req.destroy();
+    });
+  }
+
+  /** 把 Web 生成的 .ets 载入当前页（替换内容，进撤销栈，便于回退）。 */
+  private loadProxyCode(code: string): void {
+    try {
+      const ir = parse(code);
+      this.snapshot();
+      this.pages[this.curPage].file = ir;
+      this.pageNames = this.pages.map((p: PageItem) => p.name);
+      this.selPath = '';
+      this.selGeoKey = '';
+      this.showSel = false;
+      this.refreshTree();
+      this.statusText = `已载入 AI 代码（${ir.structName}）`;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.statusText = `AI 代码解析失败: ${msg}`;
+    }
   }
 
   /**

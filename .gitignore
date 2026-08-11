@@ -7,3 +7,13 @@ dist-ssr/
 *.tsbuildinfo
 .vite/
 .verify/
+
+# 密钥/环境变量（绝不提交 API Key）
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp

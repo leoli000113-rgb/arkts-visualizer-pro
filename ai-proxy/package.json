@@ -1,0 +1,11 @@
+{
+  "name": "ai-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ArkTS Visualizer AI 代理：转发 Claude API + hdc 真机屏幕流",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  }
+}

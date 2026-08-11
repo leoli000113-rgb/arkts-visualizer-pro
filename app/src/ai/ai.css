@@ -1,0 +1,225 @@
+/* ===== AI 对话框 + 真机预览面板（浮层） ===== */
+
+.ai-btn-top {
+  background: linear-gradient(135deg, #6d5dfc, #0a59f7);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ai-btn-top:hover { filter: brightness(1.1); }
+
+/* —— AI 对话框 —— */
+.ai-dialog, .device-preview {
+  position: fixed;
+  right: 20px;
+  z-index: 60;
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.18);
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  overflow: hidden;
+}
+.ai-dialog { bottom: 20px; max-height: 70vh; }
+.device-preview { top: 70px; }
+
+.ai-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #0a59f7;
+  color: #fff;
+  font-weight: 600;
+}
+.ai-dialog-x {
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.ai-dialog-x:hover { background: rgba(255,255,255,.2); }
+
+.ai-dialog-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.ai-input {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.ai-input:focus { outline: none; border-color: #0a59f7; box-shadow: 0 0 0 2px rgba(10,89,247,.15); }
+
+.ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-btn {
+  background: #0a59f7;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ai-btn:hover { background: #094ed6; }
+.ai-btn:disabled { background: #aaa; cursor: not-allowed; }
+.ai-btn-stop { background: #e53e3e; }
+.ai-btn-stop:hover { background: #c53030; }
+.ai-hint { color: #888; font-size: 11px; }
+
+.ai-error, .device-hint-sm.err { color: #c53030; font-size: 12px; }
+.ai-ok { color: #38a169; font-size: 12px; }
+.ai-waiting { color: #d69e2e; font-size: 12px; padding: 6px 0; }
+
+.ai-stream {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+.ai-thinking {
+  background: #1a1330;
+  color: #9f7aea;
+  max-height: 140px;
+}
+.ai-thinking::before {
+  content: '🧠 思考中';
+  display: block;
+  color: #6b46c1;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+/* —— 真机预览面板 —— */
+.device-preview-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.device-screen-frame {
+  border: 8px solid #1a202c;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 6px 20px rgba(0,0,0,.25);
+}
+.device-hint {
+  text-align: center;
+  color: #4a5568;
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+.device-hint code {
+  background: #edf2f7;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.device-hint-sm { font-size: 11px; color: #718096; margin: 0; }
+
+/* —— AI 设置弹窗 —— */
+.ai-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ai-modal {
+  width: 480px;
+  max-width: calc(100vw - 40px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  overflow: hidden;
+}
+.ai-settings-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ai-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.ai-field span { color: #4a5568; }
+.ai-field em { color: #a0aec0; font-style: normal; font-size: 11px; }
+.ai-field-hint { font-size: 10px; color: #718096; line-height: 1.4; }
+.ai-field-hint code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: 10px; word-break: break-all; }
+.ai-field input {
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.ai-field input:focus { outline: none; border-color: #0a59f7; box-shadow: 0 0 0 2px rgba(10,89,247,.15); }
+.ai-settings-actions { display: flex; gap: 8px; }
+.ai-settings-note { font-size: 11px; color: #a0aec0; margin: 0; line-height: 1.5; }
+
+/* —— AI 对话框：模式 tabs + 推真机按钮 —— */
+.ai-mode-tabs {
+  display: flex;
+  gap: 4px;
+}
+.ai-mode-tabs button {
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  color: #4a5568;
+  border-radius: 8px;
+  padding: 4px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ai-mode-tabs button.active {
+  background: #0a59f7;
+  color: #fff;
+  border-color: #0a59f7;
+}
+.ai-btn-device {
+  background: #2b6cb0;
+}
+.ai-btn-device:hover { background: #2c5282; }

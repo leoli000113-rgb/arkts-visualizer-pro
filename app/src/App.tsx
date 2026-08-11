@@ -11,9 +11,12 @@ import { SidePanel } from './panels/SidePanel'
 import { ZoomBar } from './panels/ZoomBar'
 import { CodePane } from './panels/CodePane'
 import { HelpModal } from './panels/HelpModal'
+import { AiDialog } from './panels/AiDialog'
+import { DevicePreview } from './panels/DevicePreview'
 import { DockZone, DockMenu, OutlineStrip } from './panels/dock'
 import { ErrorBoundary } from './editor/ErrorBoundary'
 import './App.css'
+import './ai/ai.css'
 
 /** 停靠面板内容路由：面板 id → 内容组件（大纲树为独立固定条，见 OutlineStrip） */
 function renderPanel(p: PanelId): React.ReactNode {
@@ -89,6 +92,8 @@ function useEditorShortcuts() {
 export default function App() {
   const { ir, error, deviceModel, fold, selectedPath, dropTarget, setSelected } = useStore()
   const [helpOpen, setHelpOpen] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [deviceOpen, setDeviceOpen] = useState(false)
   const paneRef = useRef<HTMLDivElement>(null)
   const [fit, setFit] = useState(1)
 
@@ -129,7 +134,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar onOpenHelp={() => setHelpOpen(true)} />
+      <TopBar onOpenHelp={() => setHelpOpen(true)} onOpenAi={() => setAiOpen(v => !v)} onOpenDevice={() => setDeviceOpen(v => !v)} />
       <ErrorBoundary>
         <div className="content">
           <div className="content-mid">
@@ -178,6 +183,8 @@ export default function App() {
         </div>
       </ErrorBoundary>
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {aiOpen && <AiDialog onClose={() => setAiOpen(false)} />}
+      {deviceOpen && <DevicePreview onClose={() => setDeviceOpen(false)} />}
       <ContextMenu />
       <DockMenu />
     </div>
