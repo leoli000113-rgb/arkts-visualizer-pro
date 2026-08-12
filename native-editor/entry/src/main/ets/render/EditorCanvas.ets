@@ -16,6 +16,15 @@ export interface RectInfo {
   h: number
 }
 
+/** 几何图条目：path → 画布相对矩形（vp）。设备 WS 回发给浏览器供命中/落点定位。 */
+export interface GeoRectEntry {
+  path: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export class PreviewController extends NodeController {
   private ir: IRNode | null = null
   private scope: Map<string, V> | null = null
@@ -77,6 +86,25 @@ export class PreviewController extends NodeController {
     if (f === undefined) return false
     f(x, y)
     return true
+  }
+
+  /**
+   * 枚举所有已挂载节点的画布相对矩形（vp），供 Web 端命中/落点/吸附叠加。
+   * 一次遍历 registry，复用 queryRect 的单位/语义（px2vp + 含 transform）。
+   * canvasOX/OY = 画布容器窗口原点（onAreaChange），减去即画布相对坐标。
+   */
+  snapshotRects(canvasOX: number, canvasOY: number): GeoRectEntry[] {
+    const out: GeoRectEntry[] = []
+    this.registry.forEach((node: FrameNode, path: string) => {
+      if (!node.isAttached()) return
+      const pos = node.getPositionToWindowWithTransform()
+      const size = node.getMeasuredSize()
+      const w = this.uiContext !== null ? this.uiContext.px2vp(size.width) : size.width
+      const h = this.uiContext !== null ? this.uiContext.px2vp(size.height) : size.height
+      const entry: GeoRectEntry = { path, x: pos.x - canvasOX, y: pos.y - canvasOY, w, h }
+      out.push(entry)
+    })
+    return out
   }
 
   disposeTree(): void {

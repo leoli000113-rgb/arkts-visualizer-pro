@@ -88,6 +88,12 @@ interface StoreState {
   navStack: string[]
   /** 交互预览模式：点击命中 router 导航的组件执行页面跳转而非选中 */
   interactive: boolean
+  /** 真机几何图：path → {x,y,w,h}（canvas 相对 vp，设备 WS 回传）；画布命中/落点/选中框按此定位 */
+  geo: Map<string, { x: number; y: number; w: number; h: number }>
+  setGeo: (m: Map<string, { x: number; y: number; w: number; h: number }>) => void
+  /** 设备渲染完成时间戳（WS 'rendered' 回传）；渲染触发截图/刷新用 */
+  renderedTs: number
+  setRenderedTs: (t: number) => void
   /** 自适应窗口：画布缩放自动适配可用空间（手动缩放时自动关闭） */
   fitMode: boolean
   /** 系统栏：画布显示手机状态栏与底部导航条，应用区避开安全区（默认开，持久化） */
@@ -217,6 +223,10 @@ export const useStore = create<StoreState>()(
         resStrings: {},
         navStack: [],
         interactive: false,
+        geo: new Map(),
+        setGeo: (m) => set({ geo: m }),
+        renderedTs: 0,
+        setRenderedTs: (t) => set({ renderedTs: t }),
         fitMode: true,
         systemBars: true,
         setSystemBars: (v) => set({ systemBars: v }),

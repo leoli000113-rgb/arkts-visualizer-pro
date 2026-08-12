@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/store'
 import { getViewport } from '../devices/devices'
-import { hdcStatus, hdcStreamUrl, postCurrentCode, launchNativeEditor } from '../ai/client'
+import { hdcStatus, hdcStreamUrl, launchNativeEditor } from '../ai/client'
+import { connectWs, sendCode } from '../ai/ws'
 
 /**
- * 真机 ArkUI 预览：把当前编辑的 .ets 推给 ai-proxy，设备上 native-editor 轮询拉取后
- * 用真 ArkUI 引擎（typeNode）全屏渲染，MJPEG 截图回传——DevEco Previewer 式高保真，
- * 不再是「转网页版近似」。改代码 → 防抖 500ms 自动推送 → 设备重渲染，画面跟着变。
+ * 真机 ArkUI 预览：把当前编辑的 .ets 推给 ai-proxy，设备上 native-editor 用真 ArkUI
+ * 引擎（typeNode）全屏渲染，MJPEG 截图回传——DevEco Previewer 式高保真，不再是「转网页版近似」。
+ * 代码经 WS 推送（<300ms，替代 1.5s 轮询）；WS 未连上时 sendCode 自动降级 HTTP 轮询。
  */
 export function DevicePreview({ onClose }: { onClose: () => void }) {
   const deviceModel = useStore(s => s.deviceModel)
@@ -21,9 +22,10 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
 
   const hasDevice = !!status?.targets?.length
 
-  // 探测设备 + 拉起 native-editor（rport 反向转发 + aa start 到前台）
+  // 探测设备 + 拉起 native-editor（rport 反向转发 + aa start 到前台）+ 连 WS hub
   useEffect(() => {
     let cancelled = false
+    connectWs() // 幂等：首次 mount 起连接，断线自重连
     hdcStatus().then(async (s) => {
       if (cancelled) return
       setStatus(s)
@@ -37,12 +39,11 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
     return () => { cancelled = true }
   }, [retry])
 
-  // 代码变化：防抖 500ms 推给 ai-proxy（仅在有设备时推，避免空跑）。
-  // 设备轮询 1.5s 命中新 ts 即载入重渲染——改一行 vp/颜色，画面跟着变。
+  // 代码变化：防抖 500ms 经 WS 推给设备（WS 未连上时 sendCode 内部降级 HTTP 轮询）。
   useEffect(() => {
     if (!hasDevice) return
     window.clearTimeout(pushTimer.current)
-    pushTimer.current = window.setTimeout(() => postCurrentCode(code), 500)
+    pushTimer.current = window.setTimeout(() => sendCode(code), 500)
     return () => window.clearTimeout(pushTimer.current)
   }, [code, hasDevice])
 

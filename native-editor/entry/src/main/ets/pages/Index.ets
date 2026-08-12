@@ -3,6 +3,7 @@ import { window } from '@kit.ArkUI';
 import { pasteboard, BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import http from '@ohos.net.http';
+import webSocket from '@ohos.net.webSocket';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { parse } from '../core/parser';
@@ -16,7 +17,7 @@ import {
 } from '../core/mutate';
 import { CONTAINER_TYPES, newNodeFor } from '../core/factory';
 import { TEMPLATE_CATEGORIES, Template, TemplateCategory } from '../core/templates';
-import { EditorCanvas, PreviewController } from '../render/EditorCanvas';
+import { EditorCanvas, PreviewController, GeoRectEntry } from '../render/EditorCanvas';
 import { flattenOutline, OutlineRow, OutlineTree } from '../panels/OutlineTree';
 
 const TAG = 'ArkTsEditor';
@@ -66,6 +67,28 @@ struct SamplePage {
 interface PageItem {
   name: string
   file: IRFile
+}
+
+/** ai-proxy WS 消息（device 收到的：code 推送 / 远程拖拽）。 */
+interface WsMsg {
+  type: string
+  code?: string
+  geoKey?: string
+  irPath?: string
+  dx?: number
+  dy?: number
+}
+
+/** 设备→浏览器 的 WS 出站消息（ArkTS 要求字面量对应声明的接口） */
+interface WsOutMsg {
+  type: string
+  rects?: GeoRectEntry[]
+}
+
+/** 设备上线主动登记角色的 hello 消息 */
+interface WsHelloMsg {
+  type: string
+  role: string
 }
 
 /** ai-proxy /api/code/current 的响应（真机闭环轮询） */
@@ -130,6 +153,16 @@ struct Index {
   private proxyTimer: number = -1;
   private proxyLastTs: number = 0;
 
+  // —— WebSocket 低延迟通道（主路径：代码/拖拽经此推送；轮询保留作 fallback）——
+  private ws: webSocket.WebSocket | null = null;
+  private wsConnected: boolean = false;
+  private wsReconnectTimer: number = -1;
+  // 远程拖拽基线/累积（镜像本机 PanGesture 的 dragBaseX/Y、dragAccX/Y 语义）
+  private rDragBaseX: number = 0;
+  private rDragBaseY: number = 0;
+  private rDragAccX: number = 0;
+  private rDragAccY: number = 0;
+
   private curFile(): IRFile {
     return this.pages[this.curPage].file;
   }
@@ -154,6 +187,8 @@ struct Index {
     this.selTimer = setInterval(() => this.syncSelRect(), 120);
     // 真机闭环：轮询 ai-proxy 拉取最新 .ets（Web 端生成后 POST 到 /api/code/current）
     this.proxyTimer = setInterval(() => this.pollProxy(), 1500);
+    // WebSocket 主路径：代码/拖拽经此推送（比 1.5s 轮询快一个量级）；轮询保留作 fallback
+    this.connectWs();
     this.refreshTree();
   }
 
@@ -166,6 +201,14 @@ struct Index {
       clearInterval(this.proxyTimer);
       this.proxyTimer = -1;
     }
+    if (this.wsReconnectTimer >= 0) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = -1;
+    }
+    if (this.ws !== null) {
+      try { this.ws.close() } catch (e) { hilog.warn(0x0000, TAG, 'ws close: %{public}s', String(e)) }
+      this.ws = null;
+    }
   }
 
   /** IR 变化后：重建画布 + 刷新大纲/属性/代码 + 稍后重查选中框（等布局完成） */
@@ -175,7 +218,7 @@ struct Index {
     this.rows = flattenOutline(f.root, this.collapsed);
     this.code = serialize(f);
     this.ver++;
-    setTimeout(() => this.syncSelRect(), 90);
+    setTimeout(() => { this.syncSelRect(); this.emitGeometry(); }, 90);
   }
 
   // ---------- 真机闭环：轮询 ai-proxy 拉取 Web 生成的 .ets ----------
@@ -227,6 +270,7 @@ struct Index {
       this.statusText = `已载入 AI 代码（${ir.structName}）`;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      hilog.warn(0x0000, TAG, 'loadProxyCode parse fail: %{public}s', msg);
       this.statusText = `AI 代码解析失败: ${msg}`;
     }
   }
@@ -234,6 +278,113 @@ struct Index {
   /** 退出全屏预览，回编辑器外壳。 */
   private exitPreview(): void {
     this.previewMode = false;
+  }
+
+  // ---------- WebSocket 低延迟通道（替代轮询主路径）----------
+
+  private connectWs(): void {
+    const url = `ws://${this.proxyHost}:${this.proxyPort}/api/ws?role=device`;
+    const ws = webSocket.createWebSocket();
+    ws.on('open', () => {
+      this.wsConnected = true;
+      hilog.info(0x0000, TAG, 'ws open');
+      // 主动登记角色，防止 ai-proxy deviceWs 指向陈旧连接
+      const hello: WsHelloMsg = { type: 'hello', role: 'device' };
+      this.wsSend(hello);
+    });
+    ws.on('message', (err: BusinessError, value: string | ArrayBuffer) => {
+      // HarmonyOS 无错时 err 传 undefined（非 null），必须同时排除两者，否则误判出错早退。
+      if (err !== null && err !== undefined) {
+        hilog.warn(0x0000, TAG, 'ws onmessage err: %{public}s', JSON.stringify(err));
+        return;
+      }
+      const text = typeof value === 'string' ? value : '';
+      if (text.length === 0) return;
+      this.onWsMessage(text);
+    });
+    ws.on('close', () => {
+      this.wsConnected = false;
+      this.ws = null;
+      hilog.info(0x0000, TAG, 'ws close, 重连 1.5s');
+      this.wsReconnectTimer = setTimeout(() => this.connectWs(), 1500);
+    });
+    ws.on('error', (err: BusinessError) => {
+      hilog.warn(0x0000, TAG, 'ws err: %{public}s', JSON.stringify(err));
+    });
+    ws.connect(url).then((ok: boolean) => {
+      this.ws = ws;
+      hilog.info(0x0000, TAG, 'ws connect ok=%{public}s', String(ok));
+    }).catch((e: BusinessError) => {
+      hilog.warn(0x0000, TAG, 'ws connect fail: %{public}s', JSON.stringify(e));
+      this.wsReconnectTimer = setTimeout(() => this.connectWs(), 1500);
+    });
+  }
+
+  private wsSend(obj: object): void {
+    if (this.ws === null || !this.wsConnected) return;
+    let s: string;
+    try { s = JSON.stringify(obj) } catch (e) { return }
+    this.ws.send(s).then(() => {
+    }, (e: BusinessError) => {
+      hilog.warn(0x0000, TAG, 'ws send: %{public}s', JSON.stringify(e));
+    });
+  }
+
+  private onWsMessage(text: string): void {
+    let msg: WsMsg;
+    try { msg = JSON.parse(text) as WsMsg } catch (e) { hilog.warn(0x0000, TAG, 'ws msg parse fail'); return }
+    hilog.info(0x0000, TAG, 'ws msg type=%{public}s', msg.type);
+    if (msg.type === 'code') {
+      if (msg.code !== undefined && msg.code.length > 0) this.loadProxyCode(msg.code);
+    } else if (msg.type === 'drag-start') {
+      this.onRemoteDragStart(msg.geoKey ?? '', msg.irPath ?? '');
+    } else if (msg.type === 'drag-delta') {
+      this.onRemoteDragDelta(msg.dx ?? 0, msg.dy ?? 0);
+    } else if (msg.type === 'drag-end') {
+      this.onRemoteDragEnd();
+    }
+  }
+
+  /** 渲染完成后发几何图（path→rect, canvas 相对 vp）+ rendered 信号给浏览器。 */
+  private emitGeometry(): void {
+    const rects: GeoRectEntry[] = this.previewCtl.snapshotRects(this.canvasOX, this.canvasOY);
+    hilog.info(0x0000, TAG, 'emitGeometry rects=%{public}d wsConn=%{public}s', rects.length, String(this.wsConnected));
+    const geoMsg: WsOutMsg = { type: 'geometry', rects };
+    this.wsSend(geoMsg);
+    const doneMsg: WsOutMsg = { type: 'rendered' };
+    this.wsSend(doneMsg);
+  }
+
+  // ---------- 远程拖拽（复用本机 PanGesture 的 moveBy+applyOffset 原语）----------
+  private onRemoteDragStart(geoKey: string, irPath: string): void {
+    if (this.showCode || irPath.length === 0) return;
+    this.snapshot();
+    const p = keyToPath(irPath);
+    const n = nodeAtPath(this.curFile().root, p);
+    if (n === null) return;
+    const base = readOffset(n);
+    this.rDragBaseX = base.x;
+    this.rDragBaseY = base.y;
+    this.rDragAccX = 0;
+    this.rDragAccY = 0;
+    this.selGeoKey = geoKey;
+    this.selPath = pathKey(p);
+    this.dragging = true;
+  }
+
+  private onRemoteDragDelta(dx: number, dy: number): void {
+    if (!this.dragging || this.selGeoKey === '') return;
+    const n = this.selNode();
+    if (n === null) return;
+    moveBy(n, dx, dy);
+    this.rDragAccX += dx;
+    this.rDragAccY += dy;
+    this.previewCtl.applyOffset(this.selGeoKey, this.rDragBaseX + this.rDragAccX, this.rDragBaseY + this.rDragAccY);
+  }
+
+  private onRemoteDragEnd(): void {
+    if (!this.dragging) return;
+    this.endDrag();
   }
 
   /**

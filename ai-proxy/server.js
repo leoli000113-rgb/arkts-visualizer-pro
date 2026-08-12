@@ -13,6 +13,7 @@
  */
 import http from 'node:http'
 import https from 'node:https'
+import { WebSocketServer } from 'ws'
 import { spawn, execFile } from 'node:child_process'
 import { readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -352,3 +353,34 @@ server.listen(PORT, () => {
   console.log(`[ai-proxy] http://localhost:${PORT}  upstream=${BASE_URL}  model=${MODEL}  key=${API_KEY ? '✓' : '✗（未配置）'}  hdc=${HDC}`)
   console.log(`[ai-proxy] 前端来源 ${ORIGIN}`)
 })
+
+// ---------- WebSocket hub：浏览器 ↔ 设备 低延迟控制通道 ----------
+// 像素仍走 MJPEG HTTP（/api/hdc/stream）；WS 只过控制（code/drag-*/capture）与几何（geometry/rendered）。
+// query ?role=device|browser 标识身份；message 按 type 路由转发到对端。
+const wss = new WebSocketServer({ server, path: '/api/ws' })
+let browserWs = null
+let deviceWs = null
+const TO_BROWSER = new Set(['geometry', 'rendered'])       // device → browser
+const TO_DEVICE = new Set(['code', 'drag-start', 'drag-delta', 'drag-end', 'capture']) // browser → device
+wss.on('connection', (ws, req) => {
+  const u = new URL(req.url, `http://localhost:${PORT}`)
+  const role = u.searchParams.get('role')
+  if (role === 'device') { deviceWs = ws; console.log('[ai-proxy] ws: device connected') }
+  else { browserWs = ws; console.log('[ai-proxy] ws: browser connected') }
+  ws.on('message', (data) => {
+    let msg
+    try { msg = JSON.parse(data.toString()) } catch { return }
+    if (msg.type === 'hello') { if (msg.role === 'device') deviceWs = ws; else browserWs = ws; return }
+    const s = data.toString()
+    if (TO_BROWSER.has(msg.type)) { try { if (browserWs) browserWs.send(s) } catch {} return }
+    if (TO_DEVICE.has(msg.type)) { try { if (deviceWs) deviceWs.send(s) } catch {} return }
+    // 未知 type：静默丢弃（不转发，避免环路）
+  })
+  ws.on('close', () => {
+    if (ws === browserWs) browserWs = null
+    if (ws === deviceWs) deviceWs = null
+    console.log(`[ai-proxy] ws closed (browser=${browserWs ? 1 : 0} device=${deviceWs ? 1 : 0})`)
+  })
+  ws.on('error', () => {})
+})
+console.log(`[ai-proxy] ws hub at /api/ws`)
