@@ -337,11 +337,14 @@ struct Index {
     if (msg.type === 'code') {
       if (msg.code !== undefined && msg.code.length > 0) this.loadProxyCode(msg.code);
     } else if (msg.type === 'drag-start') {
-      this.onRemoteDragStart(msg.geoKey ?? '', msg.irPath ?? '');
+      try { this.onRemoteDragStart(msg.geoKey ?? '', msg.irPath ?? '') }
+      catch (e) { hilog.warn(0x0000, TAG, 'drag-start err: %{public}s', JSON.stringify(e)) }
     } else if (msg.type === 'drag-delta') {
-      this.onRemoteDragDelta(msg.dx ?? 0, msg.dy ?? 0);
+      try { this.onRemoteDragDelta(msg.dx ?? 0, msg.dy ?? 0) }
+      catch (e) { hilog.warn(0x0000, TAG, 'drag-delta err: %{public}s', JSON.stringify(e)) }
     } else if (msg.type === 'drag-end') {
-      this.onRemoteDragEnd();
+      try { this.onRemoteDragEnd() }
+      catch (e) { hilog.warn(0x0000, TAG, 'drag-end err: %{public}s', JSON.stringify(e)) }
     }
   }
 

@@ -10,7 +10,12 @@ import { postCurrentCode } from './client'
  * 对本地开发工具更稳——WS 无 CORS 预检，`ws` 库默认不校验 Origin，跨端口可连。
  * MJPEG 仍走 vite /api 代理（HTTP，不受 ws 配置影响）。
  */
-const AI_PROXY_WS = `${location.protocol === 'https:' ? 'wss' : 'ws'}://localhost:5174/api/ws?role=browser`
+// 模块顶层不能直接读 location：vitest/node 环境无全局 location，会在 import 时抛
+// ReferenceError 拖死所有经 dnd.ts 间接引入本模块的测试。延迟到连接时再取。
+function wsUrl(): string {
+  const proto = (typeof location !== 'undefined' && location.protocol === 'https:') ? 'wss' : 'ws'
+  return `${proto}://localhost:5174/api/ws?role=browser`
+}
 
 let ws: WebSocket | null = null
 let connected = false
@@ -31,7 +36,7 @@ export function connectWs(): void {
 
 function open(): void {
   try {
-    ws = new WebSocket(AI_PROXY_WS)
+    ws = new WebSocket(wsUrl())
   } catch {
     ws = null
     scheduleReconnect()

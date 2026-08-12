@@ -6,6 +6,7 @@ import { IRNode } from '../ir/types'
 import { createNode } from '../ir/defaults'
 import { pxPerVp } from './scale'
 import { keyOf } from '../renderer/shared'
+import { sendDragStart, sendDragDelta, sendDragEnd } from '../ai/ws'
 
 // 约束定义已迁至 registry（元件注册表）；此处再导出保持既有引用可用
 export { acceptsChild, canAcceptMore, SINGLE_CHILD, descendFullSingleChild } from '../ir/constraints'
@@ -19,8 +20,10 @@ interface Ctx {
   type?: string
   node?: IRNode
   path?: Path
-  /** Alt+拖拽自由偏移：按下时的指针坐标、被拖节点原 offset 值与起始屏幕矩形（吸附用） */
-  freeOffset?: { startX: number; startY: number; baseX: number; baseY: number; rect?: { left: number; top: number; w: number; h: number } }
+  /** Alt+拖拽自由偏移：按下时的指针坐标、被拖节点原 offset 值与起始屏幕矩形（吸附用）。
+   *  lastOx/lastOy = 上次发往设备的绝对 offset（vp）；真机托管模式下按增量 delta 推送，
+   *  设备端累加 applyOffset，故每次 move 只发 (ox - lastOx) 的差量，避免重复累加。 */
+  freeOffset?: { startX: number; startY: number; baseX: number; baseY: number; rect?: { left: number; top: number; w: number; h: number }; lastOx?: number; lastOy?: number }
 }
 
 /** 容器判定（中部落点 = inside）：由 registry 派生 */
@@ -212,6 +215,9 @@ function detach() {
 /** 取消当前手势：不落下、清 ghost/参考线/落点（Esc/失焦/pointercancel 共用） */
 function onCancel() {
   if (!ctx) return
+  // 真机托管拖拽被取消：设备仍处 dragging 态、applyOffset 已偏移，必须发 drag-end
+  // 让设备复位（丢弃本次偏移，本地 IR 不提交——与 DOM 模式取消语义一致）
+  if (ctx.freeOffset && realCanvas()) sendDragEnd()
   endDrag()
 }
 function onEsc(e: KeyboardEvent) {
@@ -238,11 +244,14 @@ export function startMoveDrag(path: Path, altKey = false) {
     const obj = off && off.t === 'obj' ? off.v : undefined
     const bx = obj?.x && obj.x.t === 'num' ? obj.x.v : 0
     const by = obj?.y && obj.y.t === 'num' ? obj.y.v : 0
-    ctx.freeOffset = { startX: 0, startY: 0, baseX: bx, baseY: by }
+    ctx.freeOffset = { startX: 0, startY: 0, baseX: bx, baseY: by, lastOx: bx, lastOy: by }
     // 起始屏幕矩形（含基准 offset）：吸附以它为基准平移
     const r = rectOf(path)
     if (r) ctx.freeOffset.rect = { left: r.left, top: r.top, w: r.width, h: r.height }
     s.pushHistory() // 整个手势合并为一步撤销
+    // 真机托管：发 drag-start，设备 snapshot+readOffset 取基准、置 dragging；
+    // 之后每次 move 发增量 delta（设备 applyOffset 热写视觉），松手时本地一次性提交。
+    if (realCanvas()) sendDragStart(keyOf(path), keyOf(path))
   }
   const t = useStore.getState().ir ? getNodeAtPath(useStore.getState().ir!.root, path)?.type : undefined
   showGhost((t ?? '组件') + (altKey ? ' · 偏移' : ''))
@@ -507,6 +516,19 @@ function onMoveInner(e: PointerEvent) {
         if (sx.line !== undefined || sy.line !== undefined) drawGuides(parentBox, sx.line, sy.line)
       }
     }
+    if (realCanvas()) {
+      // 真机托管：设备 applyOffset 按增量热写视觉，本地 IR 暂不落盘（松手一次性提交，
+      // 否则防抖 code 推送会与 applyOffset 双驱动、画面抖动）。只发增量 delta。
+      if (fo.lastOx !== undefined && fo.lastOy !== undefined) {
+        const dx = ox - fo.lastOx
+        const dy = oy - fo.lastOy
+        fo.lastOx = ox
+        fo.lastOy = oy
+        sendDragDelta(dx, dy)
+      }
+      return
+    }
+    // DOM 画布：实时改写 .offset（每帧 mutate，松手时已是终态）
     s.mutateNode(ctx.path, n2 => setModifier(n2, 'offset', [{ t: 'obj', v: { x: { t: 'num', v: ox }, y: { t: 'num', v: oy } } }]), { history: false })
     return
   }
@@ -564,6 +586,18 @@ function onMoveInner(e: PointerEvent) {
 function onUp() {
   if (!ctx) { detach(); return }
   try {
+    // 真机托管偏移拖拽收尾：拖拽期间只发 delta（设备 applyOffset 热写视觉），
+    // 此刻把最终 offset 一次性提交到本地 IR → 防抖推送 → 设备 clean 重渲染对齐；
+    // history:false 并入 startMoveDrag 已 push 的快照 = 一步撤销。再发 drag-end 复位设备。
+    if (ctx.freeOffset && ctx.path && realCanvas()) {
+      const fo = ctx.freeOffset
+      const ox = fo.lastOx ?? fo.baseX
+      const oy = fo.lastOy ?? fo.baseY
+      sendDragEnd()
+      useStore.getState().mutateNode(ctx.path, n2 => setModifier(n2, 'offset', [{ t: 'obj', v: { x: { t: 'num', v: ox }, y: { t: 'num', v: oy } } }]), { history: false })
+      endDrag()
+      return
+    }
     performDrop()
   } catch (err) {
     // 落下失败（序列化/约束等异常）也必须收尾，避免拖拽态卡死
