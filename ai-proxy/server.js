@@ -93,6 +93,73 @@ function readBody(req) {
     req.on('error', reject)
   })
 }
+
+// ---------- MJPEG StreamHub：共享单截图协程，服务所有 <img> 订阅 ----------
+// 旧实现每连接独立 capture 循环、写同一 DEV_SNAP 路径 → 双流竞写花屏；且空闲也 6fps
+// 空转截图。改为：一条串行截图协程（互斥，杜绝 DEV_SNAP 竞写），按定时器（空闲 6fps）
+// OR 设备 rendered 事件（立即）触发；无订阅者时协程退出（空闲不抓）。
+// 拖拽期间 targetFps 提到 12（WS drag-start/drag-end 控制），改善跟手。
+const DEV_SNAP = '/data/local/tmp/_proxy_snap.jpeg'
+const FRAME_PATH = join(tmpdir(), 'arkts_proxy_snap.jpeg')
+const streams = new Set()           // 活跃 MJPEG 响应
+let targetFps = HDC_FPS              // 拖拽期间临时提到 12
+let hubRunning = false
+let captureChain = Promise.resolve() // 串行化截图（互斥），避免 snapshot_display 重入
+let lastRenderTick = 0               // 设备 rendered 时刻；loop 据此提前下一帧
+
+function pushFrameToStreams(buf) {
+  const head = `--arktsboundary\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`
+  for (const res of streams) {
+    try { res.write(head); res.write(buf); res.write('\r\n') } catch { streams.delete(res) }
+  }
+}
+function pushErrorToStreams(msg) {
+  const frame = `--arktsboundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${msg}\r\n`
+  for (const res of streams) { try { res.write(frame) } catch { streams.delete(res) } }
+}
+
+/** 串行截图一次（互斥）：snapshot_display → recv → 推给所有订阅者。 */
+function captureOnce() {
+  captureChain = captureChain.then(async () => {
+    if (streams.size === 0) return
+    try {
+      try { await hdc(['shell', 'rm', '-f', DEV_SNAP], { timeout: 2000 }) } catch {}
+      try { await hdc(['shell', 'snapshot_display', '-f', DEV_SNAP], { timeout: 4000 }) }
+      catch { await hdc(['shell', 'screencap', '-p', DEV_SNAP], { timeout: 4000 }) }
+      await hdc(['file', 'recv', DEV_SNAP, FRAME_PATH], { timeout: 4000 })
+      const buf = readFileSync(FRAME_PATH)
+      if (!buf || buf.length < 100) throw new Error('截图为空或过小')
+      pushFrameToStreams(buf)
+    } catch (e) {
+      pushErrorToStreams(`ArkTS 真机流：${String(e.message || e).slice(0, 80)}`)
+    }
+  })
+  return captureChain
+}
+
+/** 定时器驱动的截图循环：无订阅者时退出；rendered 事件可提前下一帧（见 poke）。 */
+async function hubLoop() {
+  if (hubRunning) return
+  hubRunning = true
+  try {
+    while (streams.size > 0) {
+      await captureOnce()
+      // 基础间隔由 targetFps 决定；若刚收到 rendered（<200ms 内），缩短等待加速刷新
+      let wait = Math.max(60, Math.round(1000 / targetFps))
+      const sinceRender = Date.now() - lastRenderTick
+      if (sinceRender < 200) wait = Math.min(wait, 30)
+      await new Promise(r => setTimeout(r, wait))
+    }
+  } finally { hubRunning = false }
+}
+
+/** 设备 rendered 到达：立即抓一帧（渲染触发，不再等下一 tick）+ 唤醒 loop。 */
+function pokeOnRender() {
+  lastRenderTick = Date.now()
+  captureOnce()
+  if (!hubRunning) hubLoop()
+}
+
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', ORIGIN)
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-AI-Key, X-AI-Base, X-AI-Model')
@@ -265,50 +332,18 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { return sendJson(res, 200, { ok: false, hdc: HDC, error: String(e.message || e) }) }
   }
 
-  // ---- hdc 屏幕流（MJPEG） ----
+  // ---- hdc 屏幕流（MJPEG）----
   if (path === '/api/hdc/stream' && req.method === 'GET') {
-    const boundary = 'arktsboundary'
     res.writeHead(200, {
-      'Content-Type': `multipart/x-mixed-replace; boundary=${boundary}`,
+      'Content-Type': 'multipart/x-mixed-replace; boundary=arktsboundary',
       'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'Pragma': 'no-cache',
     })
-    let closed = false
-    req.on('close', () => { closed = true })
-    // 设备端 snapshot_display 要求后缀 .jpeg（.png 会被拒：suffix must be .jpeg）；
-    // 用 .jpeg 全链路，MJPEG 帧也标 image/jpeg。
-    const DEV_SNAP = '/data/local/tmp/_proxy_snap.jpeg'
-    const framePath = join(tmpdir(), 'arkts_proxy_snap.jpeg')
-    const waitMs = Math.max(80, Math.round(1000 / HDC_FPS))
-    async function capture() {
-      // 先清掉可能的残留文件，避免 recv 到旧帧
-      try { await hdc(['shell', 'rm', '-f', DEV_SNAP], { timeout: 2000 }) } catch {}
-      // snapshot_display 优先（现代 HarmonyOS 标配）；失败回退 screencap（老系统）
-      try {
-        await hdc(['shell', 'snapshot_display', '-f', DEV_SNAP], { timeout: 4000 })
-      } catch {
-        await hdc(['shell', 'screencap', '-p', DEV_SNAP], { timeout: 4000 })
-      }
-      await hdc(['file', 'recv', DEV_SNAP, framePath], { timeout: 4000 })
-      const buf = readFileSync(framePath)
-      if (!buf || buf.length < 100) throw new Error('截图为空或过小')
-      res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`)
-      res.write(buf)
-      res.write('\r\n')
-    }
-    async function loop() {
-      while (!closed) {
-        try { await capture() }
-        catch (e) {
-          // 设备掉线/截图失败：写一帧错误提示文字图（保持连接，前端可见降级）
-          const msg = `ArkTS 真机流：${String(e.message || e).slice(0, 80)}`
-          res.write(`--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${msg}\r\n`)
-        }
-        await new Promise(r => setTimeout(r, waitMs))
-      }
-    }
-    loop().catch(() => { try { res.end() } catch {} })
+    streams.add(res)
+    req.on('close', () => { streams.delete(res) })
+    // 唤醒共享截图协程（无订阅者时它已退出；首个订阅者到来即重启）
+    if (!hubRunning) hubLoop()
     return
   }
 
@@ -371,6 +406,11 @@ wss.on('connection', (ws, req) => {
     let msg
     try { msg = JSON.parse(data.toString()) } catch { return }
     if (msg.type === 'hello') { if (msg.role === 'device') deviceWs = ws; else browserWs = ws; return }
+    // 设备渲染完成 → 立即抓一帧推流（渲染触发，空闲不空转）
+    if (msg.type === 'rendered') { pokeOnRender() }
+    // 拖拽期间提速到 12fps 改善跟手；松手回 6fps
+    if (msg.type === 'drag-start' || msg.type === 'drag-delta') targetFps = 12
+    if (msg.type === 'drag-end') targetFps = HDC_FPS
     const s = data.toString()
     if (TO_BROWSER.has(msg.type)) { try { if (browserWs) browserWs.send(s) } catch {} return }
     if (TO_DEVICE.has(msg.type)) { try { if (deviceWs) deviceWs.send(s) } catch {} return }

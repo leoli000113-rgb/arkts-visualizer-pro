@@ -83,6 +83,14 @@ interface WsMsg {
 interface WsOutMsg {
   type: string
   rects?: GeoRectEntry[]
+  screen?: ScreenSize
+}
+
+/** 设备真实屏幕 vp 尺寸（沉浸全屏下画布 Stack 的 Area 即屏幕 vp）。
+ *  Web 据此把 .phone-screen 设为 vp×0.6 → ×0.6 命中因子与密度无关地精确，消除 profile 失配漂移。 */
+interface ScreenSize {
+  w_vp: number
+  h_vp: number
 }
 
 /** 设备上线主动登记角色的 hello 消息 */
@@ -133,6 +141,9 @@ struct Index {
   private collapsed: Set<string> = new Set();
   private canvasOX: number = 0;
   private canvasOY: number = 0;
+  /** 画布 Stack 的 Area 尺寸（vp）。沉浸全屏 previewMode 下 = 真机屏幕 vp，回发给 Web 作校准基准。 */
+  private canvasVpW: number = 0;
+  private canvasVpH: number = 0;
   private panLastX: number = 0;
   private panLastY: number = 0;
   private pending: Map<string, string> = new Map();
@@ -209,6 +220,8 @@ struct Index {
       try { this.ws.close() } catch (e) { hilog.warn(0x0000, TAG, 'ws close: %{public}s', String(e)) }
       this.ws = null;
     }
+    // 页面销毁前恢复系统栏（避免沉浸态残留影响其他页面/桌面）
+    if (this.previewMode) this.setImmersive(false);
   }
 
   /** IR 变化后：重建画布 + 刷新大纲/属性/代码 + 稍后重查选中框（等布局完成） */
@@ -263,9 +276,12 @@ struct Index {
       this.selPath = '';
       this.selGeoKey = '';
       this.showSel = false;
-      // 远端推送即进全屏预览：画布撑满，外壳隐藏，Web 端 MJPEG 截到的就是干净保真渲染
+      // 远端推送即进全屏预览：画布撑满，外壳隐藏，Web 端 MJPEG 截到的就是干净保真渲染。
+      // 仅 false→true 跳变时切沉浸式（后续代码推送已在预览态，避免每 500ms 重复调窗口 API）
+      const wasPreview = this.previewMode;
       this.moveMode = false;
       this.previewMode = true;
+      if (!wasPreview) this.setImmersive(true);
       this.refreshTree();
       this.statusText = `已载入 AI 代码（${ir.structName}）`;
     } catch (e) {
@@ -278,6 +294,29 @@ struct Index {
   /** 退出全屏预览，回编辑器外壳。 */
   private exitPreview(): void {
     this.previewMode = false;
+    this.setImmersive(false);
+  }
+
+  /** 沉浸式全屏：previewMode 时隐藏状态/导航栏 + 窗口铺满，使画布原点 = 屏幕左上 =
+   *  MJPEG 原点（canvasOX/OY=0），消除状态栏偏移——这是 Web 端 geo×0.6 命中区对齐的命根。
+   *  fire-and-forget（内部 catch），避免改 loadProxyCode 为 async + ArkTS 浮动 promise 告警。 */
+  private setImmersive(on: boolean): void {
+    const hostCtx = this.getUIContext().getHostContext();
+    if (hostCtx === undefined) return;
+    window.getLastWindow(hostCtx).then((win: window.Window) => {
+      win.setWindowLayoutFullScreen(on).then(() => {
+        // 空数组隐藏所有系统栏 → 屏幕左上即应用 (0,0)；退出预览时恢复 status+navigation
+        win.setWindowSystemBarEnable(on ? [] : ['status', 'navigation']).then(() => {
+          hilog.info(0x0000, TAG, 'immersive %{public}s ok', String(on));
+        }, (e: BusinessError) => {
+          hilog.warn(0x0000, TAG, 'setWindowSystemBarEnable fail: %{public}s', JSON.stringify(e));
+        });
+      }, (e: BusinessError) => {
+        hilog.warn(0x0000, TAG, 'setWindowLayoutFullScreen fail: %{public}s', JSON.stringify(e));
+      });
+    }).catch((e: BusinessError) => {
+      hilog.warn(0x0000, TAG, 'getLastWindow fail: %{public}s', JSON.stringify(e));
+    });
   }
 
   // ---------- WebSocket 低延迟通道（替代轮询主路径）----------
@@ -348,11 +387,16 @@ struct Index {
     }
   }
 
-  /** 渲染完成后发几何图（path→rect, canvas 相对 vp）+ rendered 信号给浏览器。 */
+  /** 渲染完成后发几何图（path→rect, canvas 相对 vp）+ rendered 信号给浏览器。
+   *  附带屏幕 vp 尺寸（沉浸全屏下=屏幕 vp），Web 据此校准 .phone-screen 大小 → ×0.6 命中精确。 */
   private emitGeometry(): void {
     const rects: GeoRectEntry[] = this.previewCtl.snapshotRects(this.canvasOX, this.canvasOY);
     hilog.info(0x0000, TAG, 'emitGeometry rects=%{public}d wsConn=%{public}s', rects.length, String(this.wsConnected));
     const geoMsg: WsOutMsg = { type: 'geometry', rects };
+    if (this.canvasVpW > 0 && this.canvasVpH > 0) {
+      const sz: ScreenSize = { w_vp: this.canvasVpW, h_vp: this.canvasVpH };
+      geoMsg.screen = sz;
+    }
     this.wsSend(geoMsg);
     const doneMsg: WsOutMsg = { type: 'rendered' };
     this.wsSend(doneMsg);
@@ -752,13 +796,19 @@ struct Index {
           .onAreaChange((o: Area, a: Area) => {
             this.canvasOX = typeof a.globalPosition.x === 'number' ? a.globalPosition.x : 0;
             this.canvasOY = typeof a.globalPosition.y === 'number' ? a.globalPosition.y : 0;
+            // Area 的 width/height 即 vp；沉浸全屏下 = 屏幕 vp，回发给 Web 校准 .phone-screen 尺寸
+            const aw = typeof a.width === 'number' ? a.width as number : 0;
+            const ah = typeof a.height === 'number' ? a.height as number : 0;
+            if (aw > 0 && ah > 0) { this.canvasVpW = aw; this.canvasVpH = ah; }
             this.syncSelRect();
           })
         }
         .alignContent(Alignment.TopStart)
         .layoutWeight(1)
         .height('100%')
-        .padding(8)
+        // 预览沉浸：画布外层 8vp padding 归零，画布紧贴窗口边 → canvasOX/OY=0，
+        // geo 矩形即屏幕相对 vp，Web 端 ×0.6 落到 .phone-screen css px 即与 MJPEG 像素对齐
+        .padding(this.previewMode ? 0 : 8)
         // 手势常驻、按模式切 mask：普通模式 Normal（Scroll/List 滚动优先，画布零干扰）；
         // 移动模式 IgnoreInternal（父手势优先，选中组件在列表/滚动容器里也能拖动，
         // 否则子组件抢手势表现为「拖不动」）。mask 是普通修饰符参数，模式切换原地生效，不重建画布。
@@ -847,7 +897,8 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .padding({ top: this.topPad })
+    // 预览沉浸：topPad 归零（状态栏已隐藏，无需避让），画布原点对齐屏幕左上
+    .padding({ top: this.previewMode ? 0 : this.topPad })
     .backgroundColor('#e8eaed')
   }
 

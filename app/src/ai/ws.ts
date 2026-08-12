@@ -66,6 +66,7 @@ interface GeoRect { path: string; x: number; y: number; w: number; h: number }
 interface WsInMsg {
   type: string
   rects?: GeoRect[]
+  screen?: { w_vp: number; h_vp: number }
 }
 
 function onMessage(ev: MessageEvent): void {
@@ -75,6 +76,10 @@ function onMessage(ev: MessageEvent): void {
     const m = new Map<string, { x: number; y: number; w: number; h: number }>()
     for (const r of msg.rects) m.set(r.path, { x: r.x, y: r.y, w: r.w, h: r.h })
     useStore.getState().setGeo(m)
+    // 设备真实屏幕 vp → 校准 .phone-screen 尺寸（×0.6 命中因子与密度无关）
+    if (msg.screen && msg.screen.w_vp > 0 && msg.screen.h_vp > 0) {
+      useStore.getState().setGeoScreen(msg.screen)
+    }
   } else if (msg.type === 'rendered') {
     useStore.getState().setRenderedTs(Date.now())
   }

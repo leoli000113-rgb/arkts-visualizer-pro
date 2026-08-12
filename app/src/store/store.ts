@@ -91,6 +91,10 @@ interface StoreState {
   /** 真机几何图：path → {x,y,w,h}（canvas 相对 vp，设备 WS 回传）；画布命中/落点/选中框按此定位 */
   geo: Map<string, { x: number; y: number; w: number; h: number }>
   setGeo: (m: Map<string, { x: number; y: number; w: number; h: number }>) => void
+  /** 设备真实屏幕 vp 尺寸（沉浸全屏 = 屏幕 vp）。Web 据此把 .phone-screen 设为 vp×0.6，
+   *  使 ×0.6 命中因子与设备密度无关地精确（profile vp 与真机 vp 失配时不再漂移）。 */
+  geoScreen: { w_vp: number; h_vp: number } | null
+  setGeoScreen: (s: { w_vp: number; h_vp: number } | null) => void
   /** 设备渲染完成时间戳（WS 'rendered' 回传）；渲染触发截图/刷新用 */
   renderedTs: number
   setRenderedTs: (t: number) => void
@@ -228,6 +232,8 @@ export const useStore = create<StoreState>()(
         interactive: false,
         geo: new Map(),
         setGeo: (m) => set({ geo: m }),
+        geoScreen: null,
+        setGeoScreen: (s) => set({ geoScreen: s }),
         renderedTs: 0,
         setRenderedTs: (t) => set({ renderedTs: t }),
         wsOnline: false,

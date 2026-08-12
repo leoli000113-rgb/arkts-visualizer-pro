@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore, initStore, PanelId } from './store/store'
 import { getViewport } from './devices/devices'
+import { VP_TO_CSS } from './renderer/shared'
 import { renderNode } from './renderer/Renderer'
 import { StatusBar, NavBar } from './renderer/PhoneChrome'
 import { PropertyPanel } from './editor/PropertyPanel'
@@ -93,6 +94,7 @@ function useEditorShortcuts() {
 
 export default function App() {
   const { ir, error, deviceModel, fold, selectedPath, dropTarget, setSelected, geo, wsOnline } = useStore()
+  const geoScreen = useStore(s => s.geoScreen)
   // 真机画布模式：WS 连上且设备已回发几何图 → 主画布换成 MJPEG + 命中叠加（P2 只读选中）
   const realCanvas = wsOnline && geo.size > 0
   const [helpOpen, setHelpOpen] = useState(false)
@@ -108,6 +110,12 @@ export default function App() {
   useEditorShortcuts()
 
   const vp = getViewport(deviceModel, fold)
+  // 真机画布模式：用设备真实屏幕 vp×0.6 作画布尺寸（而非 profile vp）——校准命根。
+  // .phone-screen = real_vp×0.6 时，MJPEG objectFit:fill 与 geo(vp)×0.6 在 css px 上精确对齐，
+  // 与设备像素密度无关；profile vp 与真机 vp 失配也不再漂移。非真机模式退回 profile vp。
+  const effVp = (realCanvas && geoScreen)
+    ? { w_css: geoScreen.w_vp * VP_TO_CSS, h_css: geoScreen.h_vp * VP_TO_CSS }
+    : vp
   const zoom = useStore(s => s.zoom)
   const fitMode = useStore(s => s.fitMode)
   const interactive = useStore(s => s.interactive)
@@ -121,15 +129,15 @@ export default function App() {
     if (!pane) return
     const update = () => {
       setFit(Math.min(
-        (pane.clientWidth - 80) / (vp.w_css + 20),
-        (pane.clientHeight - 80) / (vp.h_css + 20),
+        (pane.clientWidth - 80) / (effVp.w_css + 20),
+        (pane.clientHeight - 80) / (effVp.h_css + 20),
       ))
     }
     update()
     const ro = new ResizeObserver(update)
     ro.observe(pane)
     return () => ro.disconnect()
-  }, [vp.w_css, vp.h_css])
+  }, [effVp.w_css, effVp.h_css])
 
   const effZoom = fitMode ? Math.min(2, Math.max(0.2, fit)) : zoom
   // 同步实际生效缩放到 store：dnd/resize 的 px↔vp 换算以 effZoom 为唯一口径，
@@ -172,11 +180,11 @@ export default function App() {
                   {interactive && <span className="page-live">交互预览</span>}
                 </div>
               )}
-              <div className="zoom-stage" style={{ width: (vp.w_css + 20) * effZoom, height: (vp.h_css + 20) * effZoom }}>
-                <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${effZoom})`, transformOrigin: 'top left' }}>
-                  <div className={`phone-screen${interactive ? ' interactive' : ''}${pasteArmed ? ' paste-armed' : ''}`} style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => { setSelected(null); useStore.getState().setNudge(null); useStore.getState().setPasteArmed(false) }}>
+              <div className="zoom-stage" style={{ width: (effVp.w_css + 20) * effZoom, height: (effVp.h_css + 20) * effZoom }}>
+                <div className="phone-frame" style={{ width: effVp.w_css + 20, height: effVp.h_css + 20, transform: `scale(${effZoom})`, transformOrigin: 'top left' }}>
+                  <div className={`phone-screen${interactive ? ' interactive' : ''}${pasteArmed ? ' paste-armed' : ''}`} style={{ width: effVp.w_css, height: effVp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => { setSelected(null); useStore.getState().setNudge(null); useStore.getState().setPasteArmed(false) }}>
                     {realCanvas ? (
-                      <RealDeviceCanvas vp={vp} selectedPath={selectedPath} setSelected={setSelected} />
+                      <RealDeviceCanvas vp={effVp} selectedPath={selectedPath} setSelected={setSelected} />
                     ) : (
                       <>
                         {systemBars && <StatusBar />}
