@@ -5,6 +5,7 @@ import { CONTAINER_TYPES } from '../registry'
 import { IRNode } from '../ir/types'
 import { createNode } from '../ir/defaults'
 import { pxPerVp } from './scale'
+import { keyOf } from '../renderer/shared'
 
 // 约束定义已迁至 registry（元件注册表）；此处再导出保持既有引用可用
 export { acceptsChild, canAcceptMore, SINGLE_CHILD, descendFullSingleChild } from '../ir/constraints'
@@ -82,6 +83,75 @@ function drawGuides(box: DOMRect, vx?: number, hy?: number) {
  *  带同样的 data-path——不限定范围会命中缩略图，导致拖拽吸附/落点解析到错误元素。 */
 function elOf(path: Path): HTMLElement | null {
   return document.querySelector(`.phone-screen [data-path="${path.join('.')}"]`)
+}
+
+/** 真机画布模式：WS 连上且设备已回发几何图 → 主画布是 MJPEG+overlay，无 [data-path] DOM。
+ *  此时落点/吸附改用 store.geo（path→{x,y,w,h}，canvas 相对 vp）合成屏幕矩形。 */
+function realCanvas(): boolean {
+  const s = useStore.getState()
+  return s.wsOnline && s.geo.size > 0
+}
+
+/** .phone-screen 的屏幕矩形（geo→屏幕坐标换算原点）。 */
+function phoneScreenRect(): DOMRect | null {
+  if (typeof document === 'undefined') return null
+  const el = document.querySelector('.phone-screen')
+  return el ? el.getBoundingClientRect() : null
+}
+
+/** geo 条目（canvas 相对 vp）→ 屏幕像素 DOMRect。与原 DOM getBoundingClientRect 等价：
+ *  1vp = 0.6 css × effZoom = pxPerVp()，故 left = phoneScreen.left + geo.x * pxPerVp()。 */
+function geoRectOf(path: Path): DOMRect | null {
+  const r = useStore.getState().geo.get(keyOf(path))
+  if (!r) return null
+  const ps = phoneScreenRect()
+  if (!ps) return null
+  const k = pxPerVp()
+  const left = ps.left + r.x * k
+  const top = ps.top + r.y * k
+  const w = r.w * k
+  const h = r.h * k
+  return { left, top, width: w, height: h, right: left + w, bottom: top + h, x: left, y: top, toJSON: () => ({}) } as DOMRect
+}
+
+/** 统一取节点屏幕矩形：真机画布走 geo，DOM 画布走 elOf。各调用点据此自动双模工作。 */
+function rectOf(path: Path): DOMRect | null {
+  if (realCanvas()) return geoRectOf(path)
+  const el = elOf(path)
+  return el ? el.getBoundingClientRect() : null
+}
+
+/** geo key（可能带 ForEach #k 后缀）→ 干净 IR Path。root 空串 → []。 */
+function pathFromGeoKey(k: string): Path {
+  const clean = k.split('#')[0]
+  if (clean === '') return []
+  return clean.split('.').map(Number)
+}
+
+/** 真机画布命中测试：屏幕坐标 → 画布相对 vp → 取包含点且面积最小的 geo 条目（最深节点）。
+ *  返回 {path, box}，box 为该条目的屏幕矩形（供 computeDrop 分带/吸附）。 */
+function hitTestGeo(x: number, y: number): { path: Path; box: DOMRect } | null {
+  const geo = useStore.getState().geo
+  const ps = phoneScreenRect()
+  if (!ps) return null
+  const k = pxPerVp()
+  const vx = (x - ps.left) / k
+  const vy = (y - ps.top) / k
+  let bestKey: string | null = null
+  let bestArea = Infinity
+  for (const [key, r] of geo) {
+    if (vx < r.x || vx > r.x + r.w || vy < r.y || vy > r.y + r.h) continue
+    const a = r.w * r.h
+    if (a < bestArea) { bestArea = a; bestKey = key }
+  }
+  if (bestKey === null) return null
+  const r = geo.get(bestKey)!
+  const left = ps.left + r.x * k
+  const top = ps.top + r.y * k
+  const w = r.w * k
+  const h = r.h * k
+  const box: DOMRect = { left, top, width: w, height: h, right: left + w, bottom: top + h, x: left, y: top, toJSON: () => ({}) } as DOMRect
+  return { path: pathFromGeoKey(bestKey), box }
 }
 
 /** 候选对齐线（屏幕 px）：容器边缘/中线 + 各兄弟矩形的左中右 / 上中下 */
@@ -170,7 +240,7 @@ export function startMoveDrag(path: Path, altKey = false) {
     const by = obj?.y && obj.y.t === 'num' ? obj.y.v : 0
     ctx.freeOffset = { startX: 0, startY: 0, baseX: bx, baseY: by }
     // 起始屏幕矩形（含基准 offset）：吸附以它为基准平移
-    const r = elOf(path)?.getBoundingClientRect()
+    const r = rectOf(path)
     if (r) ctx.freeOffset.rect = { left: r.left, top: r.top, w: r.width, h: r.height }
     s.pushHistory() // 整个手势合并为一步撤销
   }
@@ -320,7 +390,7 @@ export function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRec
   let at: { x: number; y: number } | undefined
   if (pos === 'inside' && containerNode?.type === 'Stack') {
     // 重定向后目标可能不是原行：取最终目标的屏幕矩形计算坐标
-    const tbox = samePath(targetPath, path) ? box : elOf(targetPath)?.getBoundingClientRect()
+    const tbox = samePath(targetPath, path) ? box : rectOf(targetPath) ?? undefined
     if (tbox) {
       const k = pxPerVp()
       let px = clientX
@@ -328,9 +398,8 @@ export function computeDrop(root: IRNode, path: Path, ratio: number, box: DOMRec
       if (canvas) {
         // 指针吸附到兄弟/容器的边缘与中线（±SNAP_VP），并绘制参考线
         const sibBoxes = containerNode.children
-          .map((_, i) => elOf([...targetPath, i]))
-          .filter((el): el is HTMLElement => !!el)
-          .map(el => el.getBoundingClientRect())
+          .map((_, i) => rectOf([...targetPath, i]))
+          .filter((r): r is DOMRect => !!r)
         const cand = candidateLines(tbox, sibBoxes)
         const sx = snapVal(clientX, cand.vx, SNAP_PX())
         const sy = snapVal(clientY, cand.hy, SNAP_PX())
@@ -354,7 +423,7 @@ function nearestChildIndex(container: IRNode, path: Path, x: number, y: number):
   const horizontal = container.type === 'Row'
   let idx = 0
   for (let i = 0; i < container.children.length; i++) {
-    const r = elOf([...path, i])?.getBoundingClientRect()
+    const r = rectOf([...path, i])
     if (!r || (r.width === 0 && r.height === 0)) continue
     const mid = horizontal ? r.left + r.width / 2 : r.top + r.height / 2
     if ((horizontal ? x : y) >= mid) idx = i + 1
@@ -420,23 +489,22 @@ function onMoveInner(e: PointerEvent) {
     if (fo.rect) {
       const k = pxPerVp()
       const parentPath = dragPath.slice(0, -1)
-      const parentEl = elOf(parentPath)
+      const parentBox = rectOf(parentPath)
       const parentNode = getNodeAtPath(s.ir.root, parentPath)
-      if (parentEl && parentNode) {
+      if (parentBox && parentNode) {
         const sibBoxes = parentNode.children
           .map((_, i) => [...parentPath, i])
           .filter(p => !samePath(p, dragPath))
-          .map(p => elOf(p))
-          .filter((el): el is HTMLElement => !!el)
-          .map(el => el.getBoundingClientRect())
-        const cand = candidateLines(parentEl.getBoundingClientRect(), sibBoxes)
+          .map(p => rectOf(p))
+          .filter((r): r is DOMRect => !!r)
+        const cand = candidateLines(parentBox, sibBoxes)
         const wantL = fo.rect.left + (ox - fo.baseX) * k
         const wantT = fo.rect.top + (oy - fo.baseY) * k
         const sx = snapEdges(wantL, fo.rect.w, cand.vx, SNAP_PX())
         const sy = snapEdges(wantT, fo.rect.h, cand.hy, SNAP_PX())
         if (sx.line !== undefined) ox = Math.round((ox + sx.delta / k) * 10) / 10
         if (sy.line !== undefined) oy = Math.round((oy + sy.delta / k) * 10) / 10
-        if (sx.line !== undefined || sy.line !== undefined) drawGuides(parentEl.getBoundingClientRect(), sx.line, sy.line)
+        if (sx.line !== undefined || sy.line !== undefined) drawGuides(parentBox, sx.line, sy.line)
       }
     }
     s.mutateNode(ctx.path, n2 => setModifier(n2, 'offset', [{ t: 'obj', v: { x: { t: 'num', v: ox }, y: { t: 'num', v: oy } } }]), { history: false })
@@ -455,8 +523,26 @@ function onMoveInner(e: PointerEvent) {
     s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY, false))
     return
   }
-  // 画布落点（限定 .phone-screen 内：模板缩略图同样带 data-path，
-  // 拖到模板/组件面板上时不能误解析成画布节点）
+  // 画布落点：真机画布走 geo 命中（无 [data-path] DOM），DOM 画布走 elementsFromPoint。
+  // 两路都限定画布范围：模板缩略图同样带 data-path/命中区，拖到模板/组件面板上时不能误解析。
+  if (realCanvas()) {
+    const hit = hitTestGeo(e.clientX, e.clientY)
+    if (!hit) { s.setDropTarget(null); return }
+    const path = hit.path
+    const node = getNodeAtPath(s.ir.root, path)
+    if (!node) { s.setDropTarget(null); return }
+    const parentPath = path.slice(0, -1)
+    const parent = parentPath.length ? getNodeAtPath(s.ir.root, parentPath) : null
+    const box = hit.box
+    const w = box.width || 1
+    const h = box.height || 1
+    const rx = (e.clientX - box.left) / w
+    const ry = (e.clientY - box.top) / h
+    const horizontal = parent?.type === 'Row'
+    const ratio = horizontal ? rx : ry
+    s.setDropTarget(computeDrop(s.ir.root, path, ratio, box, e.clientX, e.clientY, true, horizontal ? box.width : box.height))
+    return
+  }
   const el = els.find(x => typeof x.hasAttribute === 'function' && x.hasAttribute('data-path') && x.closest('.phone-screen'))
   if (!el) { s.setDropTarget(null); return }
   const pathStr = el.getAttribute('data-path') || ''
