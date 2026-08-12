@@ -13,6 +13,8 @@ import { CodePane } from './panels/CodePane'
 import { HelpModal } from './panels/HelpModal'
 import { AiDialog } from './panels/AiDialog'
 import { DevicePreview } from './panels/DevicePreview'
+import { RealDeviceCanvas } from './panels/RealDeviceCanvas'
+import { connectWs } from './ai/ws'
 import { DockZone, DockMenu, OutlineStrip } from './panels/dock'
 import { ErrorBoundary } from './editor/ErrorBoundary'
 import './App.css'
@@ -90,7 +92,9 @@ function useEditorShortcuts() {
 }
 
 export default function App() {
-  const { ir, error, deviceModel, fold, selectedPath, dropTarget, setSelected } = useStore()
+  const { ir, error, deviceModel, fold, selectedPath, dropTarget, setSelected, geo, wsOnline } = useStore()
+  // 真机画布模式：WS 连上且设备已回发几何图 → 主画布换成 MJPEG + 命中叠加（P2 只读选中）
+  const realCanvas = wsOnline && geo.size > 0
   const [helpOpen, setHelpOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
   const [deviceOpen, setDeviceOpen] = useState(false)
@@ -98,6 +102,9 @@ export default function App() {
   const [fit, setFit] = useState(1)
 
   useEffect(() => { initStore() }, [])
+  // 应用启动即连 ai-proxy WS（幂等，断线自重连）。设备上线 + 回发几何图后，
+  // 主画布自动切真机 MJPEG 模式；不依赖 DevicePreview 面板是否打开。
+  useEffect(() => { connectWs() }, [])
   useEditorShortcuts()
 
   const vp = getViewport(deviceModel, fold)
@@ -168,11 +175,17 @@ export default function App() {
               <div className="zoom-stage" style={{ width: (vp.w_css + 20) * effZoom, height: (vp.h_css + 20) * effZoom }}>
                 <div className="phone-frame" style={{ width: vp.w_css + 20, height: vp.h_css + 20, transform: `scale(${effZoom})`, transformOrigin: 'top left' }}>
                   <div className={`phone-screen${interactive ? ' interactive' : ''}${pasteArmed ? ' paste-armed' : ''}`} style={{ width: vp.w_css, height: vp.h_css, fontSize: 9.6, lineHeight: 1.35, color: '#182431' }} onClick={() => { setSelected(null); useStore.getState().setNudge(null); useStore.getState().setPasteArmed(false) }}>
-                    {systemBars && <StatusBar />}
-                    <div className="app-area">
-                      {ir ? renderNode(ir.root, [], selectedPath, setSelected, dropTarget) : <div style={{ padding: 16, color: '#888' }}>{error ? '解析失败，见右侧代码窗' : '正在解析…'}</div>}
-                    </div>
-                    {systemBars && <NavBar />}
+                    {realCanvas ? (
+                      <RealDeviceCanvas vp={vp} selectedPath={selectedPath} setSelected={setSelected} />
+                    ) : (
+                      <>
+                        {systemBars && <StatusBar />}
+                        <div className="app-area">
+                          {ir ? renderNode(ir.root, [], selectedPath, setSelected, dropTarget) : <div style={{ padding: 16, color: '#888' }}>{error ? '解析失败，见右侧代码窗' : '正在解析…'}</div>}
+                        </div>
+                        {systemBars && <NavBar />}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

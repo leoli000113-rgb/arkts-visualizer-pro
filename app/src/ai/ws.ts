@@ -39,11 +39,13 @@ function open(): void {
   }
   ws.onopen = () => {
     connected = true
+    useStore.getState().setWsOnline(true)
     console.log('[ws] browser → ai-proxy connected')
   }
   ws.onclose = () => {
     connected = false
     ws = null
+    useStore.getState().setWsOnline(false)
     scheduleReconnect()
   }
   ws.onerror = () => { /* onclose 会接管重连 */ }

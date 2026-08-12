@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/store'
 import { getViewport } from '../devices/devices'
 import { hdcStatus, hdcStreamUrl, launchNativeEditor } from '../ai/client'
-import { connectWs, sendCode } from '../ai/ws'
+import { sendCode } from '../ai/ws'
 
 /**
  * 真机 ArkUI 预览：把当前编辑的 .ets 推给 ai-proxy，设备上 native-editor 用真 ArkUI
@@ -13,6 +13,8 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
   const deviceModel = useStore(s => s.deviceModel)
   const fold = useStore(s => s.fold)
   const code = useStore(s => s.code)
+  const wsOnline = useStore(s => s.wsOnline)
+  const geoSize = useStore(s => s.geo.size)
   const vp = getViewport(deviceModel, fold)
   const [status, setStatus] = useState<{ ok: boolean; targets?: string[]; error?: string } | null>(null)
   const [launchMsg, setLaunchMsg] = useState<string | null>(null)
@@ -21,11 +23,14 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
   const pushTimer = useRef<number>(0)
 
   const hasDevice = !!status?.targets?.length
+  // 主画布已切真机模式（WS 连上 + 几何图回发）→ 不再在本面板开 MJPEG，
+  // 避免 ai-proxy 每连接独立 capture 循环、双流竞写同一截图文件导致花屏。
+  const mainCanvasLive = wsOnline && geoSize > 0
 
-  // 探测设备 + 拉起 native-editor（rport 反向转发 + aa start 到前台）+ 连 WS hub
+  // 探测设备 + 拉起 native-editor（rport 反向转发 + aa start 到前台）。
+  // WS 连接在 App.tsx 启动时已建立（幂等），这里只负责拉设备到前台。
   useEffect(() => {
     let cancelled = false
-    connectWs() // 幂等：首次 mount 起连接，断线自重连
     hdcStatus().then(async (s) => {
       if (cancelled) return
       setStatus(s)
@@ -63,17 +68,25 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
           ? <div className="device-hint">探测 hdc…</div>
           : hasDevice
             ? (
-              <div className="device-screen-frame" style={{ width: w, height: h }}>
-                {/* MJPEG multipart/x-mixed-replace：<img> 直消费，浏览器原生支持。
-                    画面是 native-editor 全屏预览模式渲染的当前代码——真 ArkUI 保真渲染。 */}
-                <img key={retry} src={hdcStreamUrl} alt="device stream"
-                  style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                  onLoad={e => {
-                    const t = e.currentTarget
-                    if (t.naturalWidth && t.naturalHeight) setImgSize({ w: t.naturalWidth, h: t.naturalHeight })
-                  }}
-                  onError={() => setRetry(r => r + 1)} />
-              </div>
+              mainCanvasLive ? (
+                <div className="device-hint">
+                  <p>✅ 真机已在<b>主画布</b>渲染（MJPEG + 命中叠加）。</p>
+                  <p className="device-hint-sm">改代码 → 防抖 500ms 推送 → 设备 &lt;300ms 重渲染，画布像素跟着变。<br />点画布组件即可选中（P2 只读）；拖拽/落点 P3/P4 接入。</p>
+                  <button className="ai-btn" onClick={() => setRetry(r => r + 1)}>↻ 重新拉起</button>
+                </div>
+              ) : (
+                <div className="device-screen-frame" style={{ width: w, height: h }}>
+                  {/* MJPEG multipart/x-mixed-replace：<img> 直消费，浏览器原生支持。
+                      画面是 native-editor 全屏预览模式渲染的当前代码——真 ArkUI 保真渲染。 */}
+                  <img key={retry} src={hdcStreamUrl} alt="device stream"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                    onLoad={e => {
+                      const t = e.currentTarget
+                      if (t.naturalWidth && t.naturalHeight) setImgSize({ w: t.naturalWidth, h: t.naturalHeight })
+                    }}
+                    onError={() => setRetry(r => r + 1)} />
+                </div>
+              )
             )
             : (
               <div className="device-hint">

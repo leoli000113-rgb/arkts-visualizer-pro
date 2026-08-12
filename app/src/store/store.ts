@@ -94,6 +94,9 @@ interface StoreState {
   /** 设备渲染完成时间戳（WS 'rendered' 回传）；渲染触发截图/刷新用 */
   renderedTs: number
   setRenderedTs: (t: number) => void
+  /** ai-proxy WS 是否连上（ws.ts onopen/onclose 维护）；为真且有 geo 即真机画布模式 */
+  wsOnline: boolean
+  setWsOnline: (v: boolean) => void
   /** 自适应窗口：画布缩放自动适配可用空间（手动缩放时自动关闭） */
   fitMode: boolean
   /** 系统栏：画布显示手机状态栏与底部导航条，应用区避开安全区（默认开，持久化） */
@@ -227,6 +230,8 @@ export const useStore = create<StoreState>()(
         setGeo: (m) => set({ geo: m }),
         renderedTs: 0,
         setRenderedTs: (t) => set({ renderedTs: t }),
+        wsOnline: false,
+        setWsOnline: (v) => set({ wsOnline: v }),
         fitMode: true,
         systemBars: true,
         setSystemBars: (v) => set({ systemBars: v }),
