@@ -44,11 +44,13 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
     return () => { cancelled = true }
   }, [retry])
 
-  // 代码变化：防抖 500ms 经 WS 推给设备（WS 未连上时 sendCode 内部降级 HTTP 轮询）。
+  // 代码变化：防抖 250ms 经 WS 推给设备（WS 未连上时 sendCode 内部降级 HTTP 轮询）。
+  // 250ms = 在「打字连贯不卡顿」与「设备重渲染节流」间折中；设备 rebuild ~100ms，
+  // 防抖过短会让快速改属性时设备 thrash。截图去重在 ai-proxy StreamHub 兜底。
   useEffect(() => {
     if (!hasDevice) return
     window.clearTimeout(pushTimer.current)
-    pushTimer.current = window.setTimeout(() => sendCode(code), 500)
+    pushTimer.current = window.setTimeout(() => sendCode(code), 250)
     return () => window.clearTimeout(pushTimer.current)
   }, [code, hasDevice])
 

@@ -118,20 +118,33 @@ function pushErrorToStreams(msg) {
   for (const res of streams) { try { res.write(frame) } catch { streams.delete(res) } }
 }
 
-/** 串行截图一次（互斥）：snapshot_display → recv → 推给所有订阅者。 */
+// captureBusy + captureDirty 去重：单次 hdc 截图 ~0.5s，若每次 rendered/drag-delta 都
+// 链一条 capture 步骤，快速连发（打字、拖拽）会堆积成几十帧陈旧截图队列 → 画布滞后数秒。
+// 改为：在飞时只置 dirty，完成后补抓一帧最新态。最多 1 在飞 + 1 待抓，永远反映最新画面。
+let captureBusy = false
+let captureDirty = false
+
+/** 串行截图一次（互斥 + 去重）：snapshot_display → recv → 推给所有订阅者。 */
 function captureOnce() {
+  if (captureBusy) { captureDirty = true; return captureChain }
+  captureBusy = true
   captureChain = captureChain.then(async () => {
-    if (streams.size === 0) return
     try {
-      try { await hdc(['shell', 'rm', '-f', DEV_SNAP], { timeout: 2000 }) } catch {}
-      try { await hdc(['shell', 'snapshot_display', '-f', DEV_SNAP], { timeout: 4000 }) }
-      catch { await hdc(['shell', 'screencap', '-p', DEV_SNAP], { timeout: 4000 }) }
-      await hdc(['file', 'recv', DEV_SNAP, FRAME_PATH], { timeout: 4000 })
-      const buf = readFileSync(FRAME_PATH)
-      if (!buf || buf.length < 100) throw new Error('截图为空或过小')
-      pushFrameToStreams(buf)
+      if (streams.size > 0) {
+        try { await hdc(['shell', 'rm', '-f', DEV_SNAP], { timeout: 2000 }) } catch {}
+        try { await hdc(['shell', 'snapshot_display', '-f', DEV_SNAP], { timeout: 4000 }) }
+        catch { await hdc(['shell', 'screencap', '-p', DEV_SNAP], { timeout: 4000 }) }
+        await hdc(['file', 'recv', DEV_SNAP, FRAME_PATH], { timeout: 4000 })
+        const buf = readFileSync(FRAME_PATH)
+        if (!buf || buf.length < 100) throw new Error('截图为空或过小')
+        pushFrameToStreams(buf)
+      }
     } catch (e) {
       pushErrorToStreams(`ArkTS 真机流：${String(e.message || e).slice(0, 80)}`)
+    } finally {
+      captureBusy = false
+      // 有新请求累积期间 → 补抓一帧最新态（不再排队 N 帧陈旧截图）
+      if (captureDirty) { captureDirty = false; captureOnce() }
     }
   })
   return captureChain

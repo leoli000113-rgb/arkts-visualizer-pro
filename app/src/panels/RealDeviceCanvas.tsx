@@ -1,7 +1,8 @@
 import { useStore } from '../store/store'
-import { VP_TO_CSS, keyOf } from '../renderer/shared'
+import { VP_TO_CSS, keyOf, openContextMenu } from '../renderer/shared'
 import { hdcStreamUrl } from '../ai/client'
 import { getNodeAtPath } from '../ir/mutate'
+import { beginMaybeMove } from '../editor/dnd'
 import type { IRFile } from '../ir/types'
 import type { DropTarget as DT } from '../editor/dnd'
 
@@ -40,15 +41,19 @@ export function RealDeviceCanvas({ vp, selectedPath, setSelected }: {
         const cleanKey = key.split('#')[0]
         const isSel = cleanKey === selKey && selKey !== ''
         const isNudge = cleanKey === nudgeKey && nudgeKey !== ''
+        // 与 DOM 画布同一套交互：pointerDown 起拖拽（结构搬运 / Alt 偏移 / nudge），
+        // 右键即选中 + 开上下文菜单（删除/副本/包裹/上移下移/位置调整），左键单击选中。
+        const p = pathFromGeoKey(key)
         return (
           <div key={key} title={key}
-            onClick={(e) => { e.stopPropagation(); setSelected(pathFromGeoKey(key)) }}
-            onContextMenu={(e) => { e.stopPropagation(); e.preventDefault(); setSelected(pathFromGeoKey(key)) }}
+            onPointerDown={(e) => { e.stopPropagation(); beginMaybeMove(p, e) }}
+            onClick={(e) => { e.stopPropagation(); setSelected(p) }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelected(p); openContextMenu(e.clientX, e.clientY, p) }}
             style={{
               position: 'absolute',
               left: r.x * VP_TO_CSS, top: r.y * VP_TO_CSS,
               width: r.w * VP_TO_CSS, height: r.h * VP_TO_CSS,
-              cursor: 'pointer',
+              cursor: isNudge ? 'move' : 'pointer',
               boxSizing: 'border-box',
               border: isSel ? '2px solid #ff3b30' : isNudge ? '2px solid #ff9500' : '1px solid rgba(0,122,255,0.18)',
               background: isSel ? 'rgba(255,59,48,0.10)' : isNudge ? 'rgba(255,149,0,0.08)' : 'transparent',

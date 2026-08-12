@@ -231,7 +231,9 @@ struct Index {
     this.rows = flattenOutline(f.root, this.collapsed);
     this.code = serialize(f);
     this.ver++;
-    setTimeout(() => { this.syncSelRect(); this.emitGeometry(); }, 90);
+    // 等 ArkUI 布局完成再回发几何图。原 90ms 偏保守；typeNode setTree 后布局多在 ~30ms
+    // 内完成（实测 940vp 屏一帧 ~16ms），降到 30ms 加速 code→geometry→截图闭环，仍留余量。
+    setTimeout(() => { this.syncSelRect(); this.emitGeometry(); }, 30);
   }
 
   // ---------- 真机闭环：轮询 ai-proxy 拉取 Web 生成的 .ets ----------
