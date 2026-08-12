@@ -1,31 +1,60 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/store'
 import { getViewport } from '../devices/devices'
-import { hdcStatus, hdcStreamUrl } from '../ai/client'
+import { hdcStatus, hdcStreamUrl, postCurrentCode, launchNativeEditor } from '../ai/client'
 
 /**
- * 真机预览：把跑着的鸿蒙模拟器/真机屏幕（hdc 截图流）投到画布旁。
- * 高保真来源——真机 ArkUI 布局引擎，1:1。无设备时降级提示。
+ * 真机 ArkUI 预览：把当前编辑的 .ets 推给 ai-proxy，设备上 native-editor 轮询拉取后
+ * 用真 ArkUI 引擎（typeNode）全屏渲染，MJPEG 截图回传——DevEco Previewer 式高保真，
+ * 不再是「转网页版近似」。改代码 → 防抖 500ms 自动推送 → 设备重渲染，画面跟着变。
  */
 export function DevicePreview({ onClose }: { onClose: () => void }) {
   const deviceModel = useStore(s => s.deviceModel)
   const fold = useStore(s => s.fold)
+  const code = useStore(s => s.code)
   const vp = getViewport(deviceModel, fold)
   const [status, setStatus] = useState<{ ok: boolean; targets?: string[]; error?: string } | null>(null)
+  const [launchMsg, setLaunchMsg] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
-
-  useEffect(() => { hdcStatus().then(setStatus) }, [retry])
+  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null)
+  const pushTimer = useRef<number>(0)
 
   const hasDevice = !!status?.targets?.length
-  // 宽高比跟随当前设备视口
-  const ratio = vp.h_css / vp.w_css
+
+  // 探测设备 + 拉起 native-editor（rport 反向转发 + aa start 到前台）
+  useEffect(() => {
+    let cancelled = false
+    hdcStatus().then(async (s) => {
+      if (cancelled) return
+      setStatus(s)
+      if (!s?.targets?.length) return
+      const lp = await launchNativeEditor()
+      if (cancelled) return
+      setLaunchMsg(lp.launched
+        ? `已拉起 native-editor${lp.forwarded ? '' : '（端口转发未就绪，画面可能不刷新）'}`
+        : `拉起失败：${lp.error || '未知'}`)
+    })
+    return () => { cancelled = true }
+  }, [retry])
+
+  // 代码变化：防抖 500ms 推给 ai-proxy（仅在有设备时推，避免空跑）。
+  // 设备轮询 1.5s 命中新 ts 即载入重渲染——改一行 vp/颜色，画面跟着变。
+  useEffect(() => {
+    if (!hasDevice) return
+    window.clearTimeout(pushTimer.current)
+    pushTimer.current = window.setTimeout(() => postCurrentCode(code), 500)
+    return () => window.clearTimeout(pushTimer.current)
+  }, [code, hasDevice])
+
+  // 预览框比例优先跟真实截图尺寸，截图没拿到时退回设备视口比例
+  const ratio = imgSize ? imgSize.h / imgSize.w : vp.h_css / vp.w_css
   const w = 220
   const h = Math.round(w * ratio)
 
   return (
     <div className="device-preview">
       <div className="ai-dialog-head">
-        <span>真机预览{hasDevice ? ` · ${status!.targets![0]}` : ''}</span>
+        <span>真机 ArkUI 预览{hasDevice ? ` · ${status!.targets![0]}` : ''}</span>
         <button className="ai-dialog-x" title="关闭" onClick={onClose}>✕</button>
       </div>
       <div className="device-preview-body">
@@ -34,9 +63,14 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
           : hasDevice
             ? (
               <div className="device-screen-frame" style={{ width: w, height: h }}>
-                {/* MJPEG multipart/x-mixed-replace：<img> 直消费，浏览器原生支持 */}
+                {/* MJPEG multipart/x-mixed-replace：<img> 直消费，浏览器原生支持。
+                    画面是 native-editor 全屏预览模式渲染的当前代码——真 ArkUI 保真渲染。 */}
                 <img key={retry} src={hdcStreamUrl} alt="device stream"
                   style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                  onLoad={e => {
+                    const t = e.currentTarget
+                    if (t.naturalWidth && t.naturalHeight) setImgSize({ w: t.naturalWidth, h: t.naturalHeight })
+                  }}
                   onError={() => setRetry(r => r + 1)} />
               </div>
             )
@@ -45,11 +79,12 @@ export function DevicePreview({ onClose }: { onClose: () => void }) {
                 <p>未检测到设备/模拟器。</p>
                 <p className="device-hint-sm">连接设备后点刷新，或运行：</p>
                 <code>hdc list targets</code>
-                <p className="device-hint-sm">需先启动 ai-proxy，且 DevEco 模拟器/真机在线。</p>
+                <p className="device-hint-sm">需已安装 native-editor HAP 且 ai-proxy 运行中（<code>cd ai-proxy && node server.js</code>）。</p>
                 <button className="ai-btn" onClick={() => setRetry(r => r + 1)}>↻ 刷新</button>
                 {status.error && <p className="device-hint-sm err">⚠ {status.error}</p>}
               </div>
             )}
+        {launchMsg && <p className="device-hint-sm">{launchMsg}</p>}
       </div>
     </div>
   )

@@ -202,11 +202,40 @@ export async function pushToDevice(code: string): Promise<{ ok: boolean; error?:
 
 /** hdc 状态探测 */
 export async function hdcStatus(): Promise<{ ok: boolean; hdc?: string; targets?: string[]; error?: string }> {
+  let r: Response
   try {
-    const r = await fetch(`${BASE}/hdc/status`)
-    return await r.json()
+    r = await fetch(`${BASE}/hdc/status`)
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    // Vite 代理 ECONNREFUSED → fetch 直接抛（代理目标端口没监听 = ai-proxy 没启动）
+    return { ok: false, error: `无法连接 ai-proxy（${e instanceof Error ? e.message : e}）。请确认已运行：cd ai-proxy && node server.js` }
+  }
+  // 代理目标不在线时，Vite 返回空响应体（HTTP 504/502）；此时不能直接 .json()，
+  // 否则前端抛 "Unexpected end of JSON input"，真机预览只显示一条看不懂的报错。
+  const text = await r.text().catch(() => '')
+  if (!text) {
+    return { ok: false, error: `代理返回空响应（HTTP ${r.status}）。ai-proxy 未启动——运行 cd ai-proxy && node server.js 重启；并确认 vite dev 也重启过（首次需加载 /api 代理配置）。` }
+  }
+  try {
+    return JSON.parse(text) as { ok: boolean; hdc?: string; targets?: string[]; error?: string }
+  } catch {
+    return { ok: false, error: `代理返回非 JSON（HTTP ${r.status}）：${text.slice(0, 200)}` }
+  }
+}
+
+/** 拉起真机 native-editor 并建立反向端口转发（设备 127.0.0.1:5174 → 宿主 ai-proxy）。 */
+export async function launchNativeEditor(): Promise<{ ok: boolean; forwarded?: boolean; launched?: boolean; error?: string }> {
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/hdc/launch`, { method: 'POST' })
+  } catch (e) {
+    return { ok: false, error: `无法连接 ai-proxy（${e instanceof Error ? e.message : e}）` }
+  }
+  const text = await r.text().catch(() => '')
+  if (!text) return { ok: false, error: `代理返回空响应（HTTP ${r.status}）` }
+  try {
+    return JSON.parse(text) as { ok: boolean; forwarded?: boolean; launched?: boolean; error?: string }
+  } catch {
+    return { ok: false, error: `代理返回非 JSON（HTTP ${r.status}）：${text.slice(0, 200)}` }
   }
 }
 

@@ -100,6 +100,9 @@ struct Index {
   @State showTemplates: boolean = false;
   @State canUndo: boolean = false;
   @State canRedo: boolean = false;
+  // 全屏预览模式：隐藏编辑器外壳（顶栏/状态行/组件库/大纲/属性），只留画布全屏渲染。
+  // 远端（Web）推来代码时自动进入；真机点「✕ 退出预览」回编辑器。
+  @State previewMode: boolean = false;
   private pages: PageItem[] = [];
   private undoStack: string[] = [];
   private redoStack: string[] = [];
@@ -120,8 +123,9 @@ struct Index {
   private selTimer: number = -1;
 
   // —— 真机闭环：轮询 ai-proxy 拉取 Web 端生成的最新 .ets ——
-  // 模拟器→宿主用 10.0.2.2；真机（USB/WiFi）改宿主 LAN IP。
-  private proxyHost: string = '10.0.2.2';
+  // 真机经 hdc rport 反向转发：设备 127.0.0.1:5174 → 宿主 ai-proxy:5174（IP 无关）。
+  // 模拟器改回 '10.0.2.2'（模拟器专用别名，不走 rport）。
+  private proxyHost: string = '127.0.0.1';
   private proxyPort: number = 5174;
   private proxyTimer: number = -1;
   private proxyLastTs: number = 0;
@@ -216,12 +220,20 @@ struct Index {
       this.selPath = '';
       this.selGeoKey = '';
       this.showSel = false;
+      // 远端推送即进全屏预览：画布撑满，外壳隐藏，Web 端 MJPEG 截到的就是干净保真渲染
+      this.moveMode = false;
+      this.previewMode = true;
       this.refreshTree();
       this.statusText = `已载入 AI 代码（${ir.structName}）`;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.statusText = `AI 代码解析失败: ${msg}`;
     }
+  }
+
+  /** 退出全屏预览，回编辑器外壳。 */
+  private exitPreview(): void {
+    this.previewMode = false;
   }
 
   /**
@@ -495,6 +507,7 @@ struct Index {
       }
       .width('100%')
       .padding({ left: 8, right: 8, top: 4, bottom: 2 })
+      .visibility(this.previewMode ? Visibility.None : Visibility.Visible)
 
       // 状态行
       Row() {
@@ -507,9 +520,12 @@ struct Index {
       }
       .width('100%')
       .padding({ left: 10, right: 10, bottom: 4 })
+      .visibility(this.previewMode ? Visibility.None : Visibility.Visible)
 
       Row() {
-        this.LibraryPanel()
+        if (!this.previewMode) {
+          this.LibraryPanel()
+        }
 
         // 画布 + 选中框 + 代码视图
         // 注意：内层 Stack 必须零 padding——onAreaChange 的 globalPosition 与 .position() 的
@@ -521,7 +537,7 @@ struct Index {
               .width('100%')
               .height('100%')
               .visibility(this.showCode ? Visibility.Hidden : Visibility.Visible)
-            if (this.showSel && !this.showCode) {
+            if (this.showSel && !this.showCode && !this.previewMode) {
               Column()
                 .width(this.selW)
                 .height(this.selH)
@@ -561,6 +577,18 @@ struct Index {
               .padding(8)
               .backgroundColor('#ffffff')
               .borderRadius(8)
+            }
+            if (this.previewMode) {
+              // 全屏预览时浮动退出按钮（左上角，不影响布局），点回编辑器外壳
+              Button('✕ 退出预览')
+                .fontSize(12)
+                .height(32)
+                .padding({ left: 12, right: 12 })
+                .backgroundColor('#cc000000')
+                .fontColor('#ffffff')
+                .borderRadius(16)
+                .position({ x: 12, y: 12 })
+                .onClick(() => this.exitPreview())
             }
           }
           .width('100%')
@@ -653,6 +681,7 @@ struct Index {
         .height('100%')
         .alignItems(HorizontalAlign.Start)
         .backgroundColor('#f7f8fa')
+        .visibility(this.previewMode ? Visibility.None : Visibility.Visible)
       }
       .layoutWeight(1)
       .width('100%')

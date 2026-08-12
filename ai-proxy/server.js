@@ -275,16 +275,24 @@ const server = http.createServer(async (req, res) => {
     })
     let closed = false
     req.on('close', () => { closed = true })
-    const framePath = join(tmpdir(), 'arkts_proxy_snap.png')
+    // 设备端 snapshot_display 要求后缀 .jpeg（.png 会被拒：suffix must be .jpeg）；
+    // 用 .jpeg 全链路，MJPEG 帧也标 image/jpeg。
+    const DEV_SNAP = '/data/local/tmp/_proxy_snap.jpeg'
+    const framePath = join(tmpdir(), 'arkts_proxy_snap.jpeg')
     const waitMs = Math.max(80, Math.round(1000 / HDC_FPS))
     async function capture() {
-      // snapshot_display 优先，失败回退 screencap
-      try { await hdc(['shell', 'snapshot_display', '-f', '/data/local/tmp/_proxy_snap.png'], { timeout: 4000 }) }
-      catch { await hdc(['shell', 'screencap', '-p', '/data/local/tmp/_proxy_snap.png'], { timeout: 4000 }) }
-      await hdc(['file', 'recv', '/data/local/tmp/_proxy_snap.png', framePath], { timeout: 4000 })
-      if (!existsSync(framePath)) throw new Error('截图文件不存在')
+      // 先清掉可能的残留文件，避免 recv 到旧帧
+      try { await hdc(['shell', 'rm', '-f', DEV_SNAP], { timeout: 2000 }) } catch {}
+      // snapshot_display 优先（现代 HarmonyOS 标配）；失败回退 screencap（老系统）
+      try {
+        await hdc(['shell', 'snapshot_display', '-f', DEV_SNAP], { timeout: 4000 })
+      } catch {
+        await hdc(['shell', 'screencap', '-p', DEV_SNAP], { timeout: 4000 })
+      }
+      await hdc(['file', 'recv', DEV_SNAP, framePath], { timeout: 4000 })
       const buf = readFileSync(framePath)
-      res.write(`--${boundary}\r\nContent-Type: image/png\r\nContent-Length: ${buf.length}\r\n\r\n`)
+      if (!buf || buf.length < 100) throw new Error('截图为空或过小')
+      res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`)
       res.write(buf)
       res.write('\r\n')
     }
@@ -316,6 +324,19 @@ const server = http.createServer(async (req, res) => {
       await hdc(['file', 'send', local, remote])
       return sendJson(res, 200, { ok: true, remote })
     } catch (e) { return sendJson(res, 500, { ok: false, error: String(e.message || e) }) }
+  }
+
+  // ---- hdc 拉起 native-editor + 反向端口转发 ----
+  // 让设备轮询宿主 ai-proxy：rport 使设备 127.0.0.1:5174 → 宿主 5174（IP 无关，
+  // USB/WiFi 通用，换网不破；等价 adb reverse）。然后 aa start 把 native-editor 拉到前台。
+  if (path === '/api/hdc/launch' && req.method === 'POST') {
+    const out = { ok: true, forwarded: false, launched: false, error: '' }
+    // rport 已存在会非零退出，忽略——fport ls 能确认转发在不在即可
+    try { await hdc(['rport', 'tcp:5174', 'tcp:5174'], { timeout: 4000 }); out.forwarded = true }
+    catch (e) { out.error += `rport: ${String(e.message || e).slice(0, 120)}; ` }
+    try { await hdc(['shell', 'aa', 'start', '-a', 'EntryAbility', '-b', 'com.leoli.arktseditor'], { timeout: 5000 }); out.launched = true }
+    catch (e) { out.error += `aa start: ${String(e.message || e).slice(0, 120)}` }
+    return sendJson(res, 200, out)
   }
 
   return sendJson(res, 404, { error: 'not found' })
